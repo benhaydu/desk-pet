@@ -2,24 +2,26 @@
 #include "secrets.h"
 #include "pins.h"
 
-bool ledOn = false;
-unsigned long last_toggle_time = 0;
+const int MAX_BRIGHTNESS = 80;      // tune this to taste
+const int STEP_INTERVAL_MS = 10;    // how often brightness changes
+
+unsigned long lastUpdateTime = 0;
+int brightness = 0;
+int direction = 1;                  // +1 = getting brighter, -1 = getting dimmer
 
 void setup() {
   Serial.begin(115200);
 }
 
 void loop() {
-if (millis() - last_toggle_time >= 500){
-  if(ledOn){
-    rgbLedWrite(PET_PIN_RGB_LED, 0, 0, 0);
-      ledOn = false;
-      Serial.println("LED OF");
-  } else {
-    rgbLedWrite(PET_PIN_RGB_LED, 255, 255, 255);
-      ledOn = true;
-      Serial.println("LED ON");
+  if (millis() - lastUpdateTime >= STEP_INTERVAL_MS) {
+    brightness += direction;        // step up or down, depending on the sign
+
+    if (brightness >= MAX_BRIGHTNESS || brightness <= 0) {
+      direction = -direction;       // hit an end: turn around
     }
-    last_toggle_time = millis();
+
+    rgbLedWrite(PET_PIN_RGB_LED, brightness, brightness, brightness);
+    lastUpdateTime = millis();
   }
 }

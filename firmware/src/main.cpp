@@ -1,4 +1,6 @@
 #include <Arduino.h>
+#include "secrets.h"
+#include "pins.h"
 
 // put function declarations here:
 int myFunction(int, int);

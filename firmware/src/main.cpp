@@ -2,19 +2,24 @@
 #include "secrets.h"
 #include "pins.h"
 
-// put function declarations here:
-int myFunction(int, int);
+bool ledOn = false;
+unsigned long last_toggle_time = 0;
 
 void setup() {
-Serial.begin(115200);
+  Serial.begin(115200);
 }
 
 void loop() {
-Serial.println("Hello world");
-delay(1000);
-}
-
-// put function definitions here:
-int myFunction(int x, int y) {
-  return x + y;
+if (millis() - last_toggle_time >= 500){
+  if(ledOn){
+    rgbLedWrite(PET_PIN_RGB_LED, 0, 0, 0);
+      ledOn = false;
+      Serial.println("LED OF");
+  } else {
+    rgbLedWrite(PET_PIN_RGB_LED, 255, 255, 255);
+      ledOn = true;
+      Serial.println("LED ON");
+    }
+    last_toggle_time = millis();
+  }
 }

@@ -77,14 +77,28 @@ const Expression HAPPY = {0, 0, 35};
 const Expression SUSPICIOUS = {35, 35, 35};
 Expression currentExpr = NEUTRAL;
 
-int leftDrop = 0;
-int rightDrop = 0;
+const Expression ALL_EXPRS[] = { NEUTRAL, ANGRY, SAD, SLEEPY, HAPPY, SUSPICIOUS };
+const int NUM_EXPRS = 6;
+int exprIndex = 0;
+
+Expression fromExpr = NEUTRAL;
+Expression toExpr = NEUTRAL;
+unsigned long exprStart = 0;
+const int EXPR_MS = 250;   // how long a morph takes
+unsigned long lastExprChange;
+const int EXPR_CYCLE_MS = 3000;
+
 const int LID_PAD = 2;
 
 void drawEye(int cx, int cy, int h, bool isLeft);
 void updateBlink();
 void updateGaze();
+void  updateExpression();
 float easeInOut(float t);
+int lerpInt(int a, int b, float t);
+Expression lerpExpr(Expression a, Expression b, float t);
+void setExpression(Expression next);
+void cycleExpressions();
 
 void setup()
 {
@@ -106,8 +120,9 @@ void loop()
   if (millis() - lastFrameTime >= FRAME_INTERVAL_MS)
   {
     unsigned long frameStart = micros(); // NEW
-
     updateBlink();
+    cycleExpressions();
+    updateExpression();
     updateGaze();
     frame.fillSprite(TFT_BLACK);
     drawEye(CENTER_X - EYE_SPACING, CENTER_Y, eyeHeight, true);
@@ -135,7 +150,14 @@ void loop()
     lastFrameTime = millis();
   }
 }
-
+void cycleExpressions(){
+  if (millis() - lastExprChange >= EXPR_CYCLE_MS){
+    exprIndex = (exprIndex + 1) % NUM_EXPRS;
+    setExpression(ALL_EXPRS[exprIndex]);
+    lastExprChange = millis();
+  }
+  
+}
 void updateGaze()
 {
 
@@ -190,8 +212,22 @@ float easeInOut(float t)
   return t * t * (3 - 2 * t);
 }
 
+void updateExpression(){
+  float t = (millis() - exprStart) / (float)EXPR_MS;
+  if (t >= 1)
+    {
+      t = 1;
+    }
+   currentExpr = lerpExpr(fromExpr, toExpr, easeInOut(t)); 
+}
+
+
+
 void drawEye(int cx, int cy, int h, bool isLeftEye)
 {
+  int leftDrop;
+  int rightDrop;
+
   int left_edge_x = cx - EYE_WIDTH / 2 + lookX;
   int top_edge_y = cy - h / 2 + lookY;
 
@@ -233,6 +269,23 @@ void drawEye(int cx, int cy, int h, bool isLeftEye)
                    TFT_BLACK);
   }
 }
+
+int lerpInt(int a, int b, float t){
+  return a + (b - a) * t;
+}
+
+Expression lerpExpr(Expression a, Expression b, float t){
+  return {lerpInt(a.lidInner, b.lidInner, t), lerpInt(a.lidOuter, b.lidOuter, t), lerpInt(a.lidBottom, b.lidBottom, t)};
+
+}
+
+void setExpression(Expression next){
+  fromExpr = currentExpr;
+  toExpr = next;
+  exprStart = millis();
+}
+
+
 
 void updateBlink()
 {

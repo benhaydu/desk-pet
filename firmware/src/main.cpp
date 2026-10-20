@@ -12,13 +12,13 @@ const int EYE_RADIUS = 18;
 const int EYE_SPACING = 65;
 const int CENTER_X = 160;
 const int CENTER_Y = 120;
-const int REGION_MARGIN = 20; // extra space around the eyes, for movement later
-
+const int REGION_MARGIN_X = 45; // extra space around the eyes, for movement later
+const int REGION_MARGIN_Y = 30;
 // The smallest box that contains both eyes, plus the margin
-const int REGION_X = CENTER_X - EYE_SPACING - EYE_WIDTH / 2 - REGION_MARGIN; // left edge
-const int REGION_Y = CENTER_Y - EYE_HEIGHT / 2 - REGION_MARGIN;              // top edge
-const int REGION_W = (EYE_SPACING + EYE_WIDTH / 2 + REGION_MARGIN) * 2;      // width
-const int REGION_H = EYE_HEIGHT + REGION_MARGIN * 2;                         // height
+const int REGION_X = CENTER_X - EYE_SPACING - EYE_WIDTH / 2 - REGION_MARGIN_X; // left edge
+const int REGION_Y = CENTER_Y - EYE_HEIGHT / 2 - REGION_MARGIN_Y;              // top edge
+const int REGION_W = (EYE_SPACING + EYE_WIDTH / 2 + REGION_MARGIN_X) * 2;      // width
+const int REGION_H = EYE_HEIGHT + REGION_MARGIN_Y * 2;                         // height
 constexpr uint16_t EYE_COLOR = TFT_GREENYELLOW;
 
 const int FRAME_INTERVAL_MS = 33;
@@ -43,8 +43,8 @@ enum BlinkState
 BlinkState blinkState = OPEN;
 
 // for eye animations
-const int LOOK_RANGE_X = REGION_MARGIN; // can't look further than the margin!
-const int LOOK_RANGE_Y = REGION_MARGIN;
+const int LOOK_RANGE_X = REGION_MARGIN_X; // can't look further than the margin!
+const int LOOK_RANGE_Y = REGION_MARGIN_Y;
 const int GLANCE_MS = 180;
 const int MIN_GLANCE = 25;
 enum GazeState
@@ -85,13 +85,32 @@ void loop()
 {
   if (millis() - lastFrameTime >= FRAME_INTERVAL_MS)
   {
+    unsigned long frameStart = micros();                 // NEW
+
     updateBlink();
     updateGaze();
     frame.fillSprite(TFT_BLACK);
     drawEye(CENTER_X - EYE_SPACING, CENTER_Y, eyeHeight);
     drawEye(CENTER_X + EYE_SPACING, CENTER_Y, eyeHeight);
+
+    unsigned long drawDone = micros();                   // NEW
+
     // Push only the box around the eyes, to the same spot on screen
     frame.pushSprite(REGION_X, REGION_Y, REGION_X, REGION_Y, REGION_W, REGION_H);
+
+    unsigned long pushDone = micros();                   // NEW
+
+    // Print once every 30 frames (~once a second) so Serial doesn't flood   NEW
+    static int frameCount = 0;                           // NEW
+    frameCount++;                                        // NEW
+    if (frameCount >= 30)                                // NEW
+    {                                                    // NEW
+      frameCount = 0;                                    // NEW
+      Serial.printf("draw: %lu us  push: %lu us  total: %lu us\n",   // NEW
+                    drawDone - frameStart,               // NEW
+                    pushDone - drawDone,                 // NEW
+                    pushDone - frameStart);              // NEW
+    }                                                    // NEW
 
     lastFrameTime = millis();
   }

@@ -3,58 +3,48 @@
 #include "secrets.h"
 #include "pins.h"
 
-const int MAX_BRIGHTNESS = 80;      // tune this to taste
-const int STEP_INTERVAL_MS = 10;    // how often brightness changes
-const int DEBOUNCE_MS = 50;
+const int EYE_WIDTH = 70;
+const int EYE_HEIGHT = 90;
+const int EYE_RADIUS = 18;
+const int EYE_SPACING = 65;
+const int CENTER_X = 160;
+const int CENTER_Y = 120;
+constexpr uint16_t EYE_COLOR = TFT_CYAN;
+
+const int FRAME_INTERVAL_MS = 33;
 
 TFT_eSPI tft = TFT_eSPI();
+TFT_eSprite frame = TFT_eSprite(&tft);
 
-int mode = 0;
+unsigned long lastFrameTime = 0;
 
-unsigned long lastPressTime = 0;
-unsigned long lastUpdateTime = 0;
-int brightness = 0;
-int direction = 1;                  // +1 = getting brighter, -1 = getting dimmer
-int lastButtonState = HIGH; // high = not pressed
+void drawEye(int cx, int cy);
 
-void setup() {
+void setup()
+{
   Serial.begin(115200);
   pinMode(PET_PIN_BUTTON, INPUT_PULLUP);
   tft.init();
   tft.setRotation(1);
-   tft.fillScreen(TFT_BLACK);
-  tft.drawString("desk-pet", 10, 10, 4);
+  if (frame.createSprite(tft.width(), tft.height()) == nullptr)
+  {
+    Serial.println("Sprite allocation failed: not enough memory");
+  }
 }
 
-void loop() {
-  if (millis() - lastUpdateTime >= STEP_INTERVAL_MS) {
-    brightness += direction;        // step up or down, depending on the sign
-
-    if (brightness >= MAX_BRIGHTNESS || brightness <= 0) {
-      direction = -direction;       // hit an end: turn around
-    }
-
-    switch (mode) {
-  case 0:   // white
-    rgbLedWrite(PET_PIN_RGB_LED, brightness, brightness, brightness);
-    break;
-  case 1:   // cyan
-    rgbLedWrite(PET_PIN_RGB_LED, 0, brightness, brightness);
-    break;
-  case 2:   // magenta
-    rgbLedWrite(PET_PIN_RGB_LED, brightness, 0, brightness);
-    break;
+void loop()
+{
+  if (millis() - lastFrameTime >= FRAME_INTERVAL_MS)
+  {
+    frame.fillSprite(TFT_BLACK);
+    drawEye(CENTER_X - EYE_SPACING, CENTER_Y);
+    drawEye(CENTER_X + EYE_SPACING, CENTER_Y);
+    frame.pushSprite(0, 0);
+    lastFrameTime = millis();
+  }
 }
-    lastUpdateTime = millis();
-  }
 
-  int currentButtonState = digitalRead(PET_PIN_BUTTON);
-
-  if(lastButtonState == HIGH && currentButtonState == LOW && millis() - lastPressTime >= DEBOUNCE_MS){
-    mode = (mode + 1) % 3;
-    lastPressTime = millis();
-    Serial.println(mode);
-  }
-
-  lastButtonState = currentButtonState;
+void drawEye(int cx, int cy)
+{
+  frame.fillSmoothRoundRect(cx - EYE_WIDTH / 2, cy - EYE_HEIGHT / 2, EYE_WIDTH, EYE_HEIGHT, EYE_RADIUS, EYE_COLOR);
 }

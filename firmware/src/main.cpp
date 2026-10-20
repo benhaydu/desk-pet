@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <TFT_eSPI.h>
 #include "secrets.h"
 #include "pins.h"
 
@@ -6,6 +7,7 @@ const int MAX_BRIGHTNESS = 80;      // tune this to taste
 const int STEP_INTERVAL_MS = 10;    // how often brightness changes
 const int DEBOUNCE_MS = 50;
 
+TFT_eSPI tft = TFT_eSPI();
 
 int mode = 0;
 
@@ -18,6 +20,10 @@ int lastButtonState = HIGH; // high = not pressed
 void setup() {
   Serial.begin(115200);
   pinMode(PET_PIN_BUTTON, INPUT_PULLUP);
+  tft.init();
+  tft.setRotation(1);
+   tft.fillScreen(TFT_BLACK);
+  tft.drawString("desk-pet", 10, 10, 4);
 }
 
 void loop() {

@@ -9,6 +9,13 @@ const int EYE_RADIUS = 18;
 const int EYE_SPACING = 65;
 const int CENTER_X = 160;
 const int CENTER_Y = 120;
+const int REGION_MARGIN = 20; // extra space around the eyes, for movement later
+
+// The smallest box that contains both eyes, plus the margin
+const int REGION_X = CENTER_X - EYE_SPACING - EYE_WIDTH / 2 - REGION_MARGIN; // left edge
+const int REGION_Y = CENTER_Y - EYE_HEIGHT / 2 - REGION_MARGIN;              // top edge
+const int REGION_W = (EYE_SPACING + EYE_WIDTH / 2 + REGION_MARGIN) * 2;      // width
+const int REGION_H = EYE_HEIGHT + REGION_MARGIN * 2;                         // height
 constexpr uint16_t EYE_COLOR = TFT_CYAN;
 
 const int FRAME_INTERVAL_MS = 33;
@@ -30,16 +37,24 @@ void setup()
   {
     Serial.println("Sprite allocation failed: not enough memory");
   }
+  tft.fillScreen(TFT_BLACK);
 }
 
 void loop()
 {
   if (millis() - lastFrameTime >= FRAME_INTERVAL_MS)
   {
+    // unsigned long frameStart = micros();
+
     frame.fillSprite(TFT_BLACK);
     drawEye(CENTER_X - EYE_SPACING, CENTER_Y);
     drawEye(CENTER_X + EYE_SPACING, CENTER_Y);
-    frame.pushSprite(0, 0);
+    // unsigned long drawDone = micros();
+
+    // Push only the box around the eyes, to the same spot on screen
+    frame.pushSprite(REGION_X, REGION_Y, REGION_X, REGION_Y, REGION_W, REGION_H);
+    // unsigned long pushDone = micros();
+
     lastFrameTime = millis();
   }
 }

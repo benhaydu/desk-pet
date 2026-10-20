@@ -19,7 +19,7 @@ const int REGION_X = CENTER_X - EYE_SPACING - EYE_WIDTH / 2 - REGION_MARGIN_X; /
 const int REGION_Y = CENTER_Y - EYE_HEIGHT / 2 - REGION_MARGIN_Y;              // top edge
 const int REGION_W = (EYE_SPACING + EYE_WIDTH / 2 + REGION_MARGIN_X) * 2;      // width
 const int REGION_H = EYE_HEIGHT + REGION_MARGIN_Y * 2;                         // height
-constexpr uint16_t EYE_COLOR = TFT_GREENYELLOW;
+constexpr uint16_t EYE_COLOR = TFT_PINK;
 
 const int FRAME_INTERVAL_MS = 33;
 const int CLOSED_HOLD_MS = 40;
@@ -61,7 +61,27 @@ unsigned long moveStart = 0;
 unsigned long holdStart = 0;
 unsigned long holdDelay = 0;
 
-void drawEye(int cx, int cy, int h);
+// expressions
+struct Expression
+{
+  int lidInner;  // how far the top lid drops at the nose side (px)
+  int lidOuter;  // how far it drops at the outside edge (px)
+  int lidBottom; // how far the bottom lid rises (px)
+};
+
+const Expression NEUTRAL = {0, 0, 0};
+const Expression ANGRY = {35, 0, 0}; // values in the same order as the struct
+const Expression SAD = {0, 35, 0};
+const Expression SLEEPY = {15, 15, 0};
+const Expression HAPPY = {0, 0, 35};
+const Expression SUSPICIOUS = {35, 35, 35};
+Expression currentExpr = NEUTRAL;
+
+int leftDrop = 0;
+int rightDrop = 0;
+const int LID_PAD = 2;
+
+void drawEye(int cx, int cy, int h, bool isLeft);
 void updateBlink();
 void updateGaze();
 float easeInOut(float t);
@@ -85,32 +105,32 @@ void loop()
 {
   if (millis() - lastFrameTime >= FRAME_INTERVAL_MS)
   {
-    unsigned long frameStart = micros();                 // NEW
+    unsigned long frameStart = micros(); // NEW
 
     updateBlink();
     updateGaze();
     frame.fillSprite(TFT_BLACK);
-    drawEye(CENTER_X - EYE_SPACING, CENTER_Y, eyeHeight);
-    drawEye(CENTER_X + EYE_SPACING, CENTER_Y, eyeHeight);
+    drawEye(CENTER_X - EYE_SPACING, CENTER_Y, eyeHeight, true);
+    drawEye(CENTER_X + EYE_SPACING, CENTER_Y, eyeHeight, false);
 
-    unsigned long drawDone = micros();                   // NEW
+    unsigned long drawDone = micros(); // NEW
 
     // Push only the box around the eyes, to the same spot on screen
     frame.pushSprite(REGION_X, REGION_Y, REGION_X, REGION_Y, REGION_W, REGION_H);
 
-    unsigned long pushDone = micros();                   // NEW
+    unsigned long pushDone = micros(); // NEW
 
     // Print once every 30 frames (~once a second) so Serial doesn't flood   NEW
-    static int frameCount = 0;                           // NEW
-    frameCount++;                                        // NEW
-    if (frameCount >= 30)                                // NEW
-    {                                                    // NEW
-      frameCount = 0;                                    // NEW
-      Serial.printf("draw: %lu us  push: %lu us  total: %lu us\n",   // NEW
-                    drawDone - frameStart,               // NEW
-                    pushDone - drawDone,                 // NEW
-                    pushDone - frameStart);              // NEW
-    }                                                    // NEW
+    static int frameCount = 0;                                     // NEW
+    frameCount++;                                                  // NEW
+    if (frameCount >= 30)                                          // NEW
+    {                                                              // NEW
+      frameCount = 0;                                              // NEW
+      Serial.printf("draw: %lu us  push: %lu us  total: %lu us\n", // NEW
+                    drawDone - frameStart,                         // NEW
+                    pushDone - drawDone,                           // NEW
+                    pushDone - frameStart);                        // NEW
+    } // NEW
 
     lastFrameTime = millis();
   }
@@ -170,9 +190,48 @@ float easeInOut(float t)
   return t * t * (3 - 2 * t);
 }
 
-void drawEye(int cx, int cy, int h)
+void drawEye(int cx, int cy, int h, bool isLeftEye)
 {
-  frame.fillSmoothRoundRect(cx - EYE_WIDTH / 2 + lookX, cy - h / 2 + lookY, EYE_WIDTH, h, EYE_RADIUS, EYE_COLOR);
+  int left_edge_x = cx - EYE_WIDTH / 2 + lookX;
+  int top_edge_y = cy - h / 2 + lookY;
+
+  int right_edge_x = left_edge_x + EYE_WIDTH;
+  int bottom_edge_y = top_edge_y + h;
+  frame.fillSmoothRoundRect(left_edge_x, top_edge_y, EYE_WIDTH, h, EYE_RADIUS, EYE_COLOR);
+
+  int lidLeft = left_edge_x - LID_PAD;
+  int lidRight = right_edge_x + LID_PAD;
+  int lidTop = top_edge_y - LID_PAD;
+
+  if (isLeftEye)
+  {
+    leftDrop = currentExpr.lidOuter;
+    rightDrop = currentExpr.lidInner;
+  }
+  else
+  {
+
+    leftDrop = currentExpr.lidInner;
+    rightDrop = currentExpr.lidOuter;
+  }
+  frame.fillTriangle(lidLeft, lidTop,
+                     lidRight, lidTop,
+                     lidLeft, top_edge_y + leftDrop,
+                     TFT_BLACK);
+
+  // Triangle 2: TR, BR, BL
+  frame.fillTriangle(lidRight, lidTop,
+                     lidRight, top_edge_y + rightDrop,
+                     lidLeft, top_edge_y + leftDrop,
+                     TFT_BLACK);
+
+  if (currentExpr.lidBottom > 0)
+  {
+    int rise = currentExpr.lidBottom;
+    frame.fillRect(lidLeft, bottom_edge_y - rise,
+                   lidRight - lidLeft, rise + LID_PAD,
+                   TFT_BLACK);
+  }
 }
 
 void updateBlink()

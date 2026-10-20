@@ -5,6 +5,9 @@
 
 const int EYE_WIDTH = 70;
 const int EYE_HEIGHT = 90;
+const int MIN_EYE_HEIGHT = 6;
+const int BLINK_SPEED = 30;
+
 const int EYE_RADIUS = 18;
 const int EYE_SPACING = 65;
 const int CENTER_X = 160;
@@ -19,13 +22,27 @@ const int REGION_H = EYE_HEIGHT + REGION_MARGIN * 2;                         // 
 constexpr uint16_t EYE_COLOR = TFT_CYAN;
 
 const int FRAME_INTERVAL_MS = 33;
+const int CLOSED_HOLD_MS = 40;
 
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
 
 unsigned long lastFrameTime = 0;
+unsigned long openedAt = 0;
+unsigned long blinkDelay = 0;
+unsigned long closedSince = 0;
+int eyeHeight = EYE_HEIGHT;
 
-void drawEye(int cx, int cy);
+enum BlinkState
+{
+  OPEN,
+  CLOSING,
+  CLOSED,
+  OPENING
+};
+BlinkState blinkState = OPEN;
+
+void drawEye(int cx, int cy, int h);
 
 void setup()
 {
@@ -38,17 +55,56 @@ void setup()
     Serial.println("Sprite allocation failed: not enough memory");
   }
   tft.fillScreen(TFT_BLACK);
+  openedAt = millis();
+  blinkDelay =  random(2000, 6000);
 }
 
 void loop()
 {
   if (millis() - lastFrameTime >= FRAME_INTERVAL_MS)
   {
+    switch (blinkState)
+    {
+    case OPEN:
+      if (millis() - openedAt >= blinkDelay)
+      {
+        blinkState = CLOSING;
+      }
+      break;
+
+    case CLOSING:
+      eyeHeight -= BLINK_SPEED;
+      if (eyeHeight <= MIN_EYE_HEIGHT)
+      {
+        eyeHeight = MIN_EYE_HEIGHT;
+        blinkState = CLOSED;
+        closedSince = millis();
+      }
+      break;
+
+    case CLOSED:
+      if (millis() - closedSince >= CLOSED_HOLD_MS)
+      {
+        blinkState = OPENING;
+      }
+      break;
+
+    case OPENING:
+      eyeHeight += BLINK_SPEED;
+      if (eyeHeight >= EYE_HEIGHT)
+      {
+        eyeHeight = EYE_HEIGHT;
+        openedAt = millis();
+        blinkDelay =  random(2000, 6000);
+        blinkState = OPEN;
+      }
+      break;
+    }
     // unsigned long frameStart = micros();
 
     frame.fillSprite(TFT_BLACK);
-    drawEye(CENTER_X - EYE_SPACING, CENTER_Y);
-    drawEye(CENTER_X + EYE_SPACING, CENTER_Y);
+    drawEye(CENTER_X - EYE_SPACING, CENTER_Y, eyeHeight);
+    drawEye(CENTER_X + EYE_SPACING, CENTER_Y, eyeHeight);
     // unsigned long drawDone = micros();
 
     // Push only the box around the eyes, to the same spot on screen
@@ -59,7 +115,7 @@ void loop()
   }
 }
 
-void drawEye(int cx, int cy)
+void drawEye(int cx, int cy, int h)
 {
-  frame.fillSmoothRoundRect(cx - EYE_WIDTH / 2, cy - EYE_HEIGHT / 2, EYE_WIDTH, EYE_HEIGHT, EYE_RADIUS, EYE_COLOR);
+  frame.fillSmoothRoundRect(cx - EYE_WIDTH / 2, cy - h / 2, EYE_WIDTH, h, EYE_RADIUS, EYE_COLOR);
 }

@@ -11,7 +11,7 @@ TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
 
 unsigned long lastFrameTime = 0;
-
+static unsigned long lastTimePrint = 0;
 void setup()
 {
   Serial.begin(115200);
@@ -61,4 +61,20 @@ void loop()
     lastFrameTime = millis();
   }
   updateNetwork();
+  if (millis() - lastTimePrint >= 10000)
+  {
+    lastTimePrint = millis();
+    if (!timeIsValid())
+    {
+      Serial.println("time not synced");
+    }
+    else
+    {
+      struct tm now;
+      getLocalTime(&now, 0);
+      char buf[32];
+      strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &now);
+      Serial.println(buf);
+    }
+  }
 }

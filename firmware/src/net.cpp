@@ -16,6 +16,8 @@ static const int TIMEOUT_MS = 15000;
 static const int RETRY_MS = 5000;
 static unsigned long start_connect = 0;
 static unsigned long retry_timer = 0;
+static const char* TZ_STRING = "PST8PDT,M3.2.0,M11.1.0";
+
 
 void networkInit()
 {
@@ -43,6 +45,7 @@ void updateNetwork()
         {
             Serial.print("Connected IP: ");
             Serial.println(WiFi.localIP());
+            configTzTime(TZ_STRING, "pool.ntp.org");
             netstate = NET_CONNECTED;
             
         }
@@ -65,4 +68,10 @@ void updateNetwork()
         break;
     }
 }
+
+bool timeIsValid(){
+    struct tm t;
+    return getLocalTime(&t, 0);
+}
+
 

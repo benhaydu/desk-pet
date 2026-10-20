@@ -1,6 +1,6 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
-#include "secrets.h"
+#include "net.h"
 #include "pins.h"
 #include "eyes.h"
 
@@ -26,6 +26,7 @@ void setup()
   tft.fillScreen(TFT_BLACK);
 
   eyesInit();
+  networkInit();
 }
 
 void loop()
@@ -59,4 +60,5 @@ void loop()
 
     lastFrameTime = millis();
   }
+  updateNetwork();
 }

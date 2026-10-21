@@ -29,6 +29,7 @@ void setup()
 
   eyesInit();
   networkInit();
+  weatherStart();
 }
 
 void loop()
@@ -82,15 +83,4 @@ void loop()
     }
   }
 
-  // step 3a test: fetch once, right here in loop, and time how long the eyes are frozen
-  static bool fetched = false;
-  if (!fetched && isOnline())
-  {
-    fetched = true;
-    unsigned long fetchStart = millis();
-    bool ok = fetchWeather();
-    Serial.printf("fetch %s, took %lu ms (eyes frozen this whole time)\n",
-                  ok ? "ok" : "failed",
-                  millis() - fetchStart);
-  }
 }

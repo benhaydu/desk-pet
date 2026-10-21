@@ -16,16 +16,20 @@ static const int TIMEOUT_MS = 15000;
 static const int RETRY_MS = 5000;
 static unsigned long start_connect = 0;
 static unsigned long retry_timer = 0;
-static const char* TZ_STRING = "PST8PDT,M3.2.0,M11.1.0";
-
+static const char* const TZ_STRING = "PST8PDT,M3.2.0,M11.1.0";
 
 void networkInit()
 {
     retry_timer = millis() - RETRY_MS;
     WiFi.mode(WIFI_STA);
 }
-bool isOnline(){
-    return (WiFi.status() == WL_CONNECTED);
+bool isOnline()
+{
+    return (netstate == NET_CONNECTED);
+}
+static bool wifiConnected()
+{
+    return WiFi.status() == WL_CONNECTED;
 }
 
 void updateNetwork()
@@ -41,13 +45,12 @@ void updateNetwork()
         }
         break;
     case NET_CONNECTING:
-        if (isOnline())
+        if (wifiConnected())
         {
             Serial.print("Connected IP: ");
             Serial.println(WiFi.localIP());
             configTzTime(TZ_STRING, "pool.ntp.org");
             netstate = NET_CONNECTED;
-            
         }
         else if (millis() - start_connect >= TIMEOUT_MS)
         {
@@ -55,11 +58,10 @@ void updateNetwork()
             retry_timer = millis();
             Serial.println("Wi-Fi timed out, retrying");
             netstate = NET_DISCONNECTED;
-            
         }
         break;
     case NET_CONNECTED:
-        if (!isOnline())
+        if (!wifiConnected())
         {
             retry_timer = millis();
             Serial.println("Wi-Fi lost");
@@ -69,9 +71,8 @@ void updateNetwork()
     }
 }
 
-bool timeIsValid(){
+bool timeIsValid()
+{
     struct tm t;
     return getLocalTime(&t, 0);
 }
-
-

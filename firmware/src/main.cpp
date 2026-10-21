@@ -3,15 +3,17 @@
 #include "net.h"
 #include "pins.h"
 #include "eyes.h"
+#include "weather.h"
 
 const int FRAME_INTERVAL_MS = 33;
 
-// Not static: eyes.cpp reaches this via "extern"
+// not static, eyes.cpp uses this through extern
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
 
 unsigned long lastFrameTime = 0;
 static unsigned long lastTimePrint = 0;
+
 void setup()
 {
   Serial.begin(115200);
@@ -41,12 +43,12 @@ void loop()
 
     unsigned long drawDone = micros();
 
-    // Push only the box around the eyes, to the same spot on screen
+    // push only the box around the eyes
     frame.pushSprite(REGION_X, REGION_Y, REGION_X, REGION_Y, REGION_W, REGION_H);
 
     unsigned long pushDone = micros();
 
-    // Print timing once every 30 frames (~once a second)
+    // timing once every 30 frames (~once a second)
     static int frameCount = 0;
     frameCount++;
     if (frameCount >= 30)
@@ -60,7 +62,9 @@ void loop()
 
     lastFrameTime = millis();
   }
+
   updateNetwork();
+
   if (millis() - lastTimePrint >= 10000)
   {
     lastTimePrint = millis();
@@ -76,5 +80,17 @@ void loop()
       strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &now);
       Serial.println(buf);
     }
+  }
+
+  // step 3a test: fetch once, right here in loop, and time how long the eyes are frozen
+  static bool fetched = false;
+  if (!fetched && isOnline())
+  {
+    fetched = true;
+    unsigned long fetchStart = millis();
+    bool ok = fetchWeather();
+    Serial.printf("fetch %s, took %lu ms (eyes frozen this whole time)\n",
+                  ok ? "ok" : "failed",
+                  millis() - fetchStart);
   }
 }

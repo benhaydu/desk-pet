@@ -57,6 +57,7 @@ void updateNetwork()
             WiFi.disconnect();
             retry_timer = millis();
             Serial.println("Wi-Fi timed out, retrying");
+            Serial.printf("Wi-Fi timed out, status %d\n", WiFi.status());
             netstate = NET_DISCONNECTED;
         }
         break;

@@ -4,6 +4,7 @@
 #include "pins.h"
 #include "eyes.h"
 #include "weather.h"
+#include "status.h"
 
 const int FRAME_INTERVAL_MS = 33;
 
@@ -40,7 +41,8 @@ void loop()
     lastFrameTime = millis();
 
     updateEyes();
-    frame.fillSprite(TFT_BLACK);
+    updateStatus();
+    frame.fillRect(REGION_X, REGION_Y, REGION_W, REGION_H, TFT_BLACK); 
     drawEyes();
 
     unsigned long drawDone = micros();

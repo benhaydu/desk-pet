@@ -5,7 +5,7 @@
 extern TFT_eSprite frame;
 
 static const int MIN_EYE_HEIGHT = 6;
-static const int BLINK_SPEED = 30;
+static const int BLINK_SPEED = 20;
 static const int CLOSED_HOLD_MS = 40;
 static const int EYE_RADIUS = 18;
 static constexpr uint16_t EYE_COLOR = TFT_PINK;

@@ -37,6 +37,7 @@ void loop()
   if (millis() - lastFrameTime >= FRAME_INTERVAL_MS)
   {
     unsigned long frameStart = micros();
+    lastFrameTime = millis();
 
     updateEyes();
     frame.fillSprite(TFT_BLACK);
@@ -61,7 +62,7 @@ void loop()
                     pushDone - frameStart);
     }
 
-    lastFrameTime = millis();
+    
   }
 
   updateNetwork();

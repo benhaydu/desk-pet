@@ -17,7 +17,7 @@ static const unsigned long WEATHER_REFRESH_MS = 15UL * 60 * 1000;
 static const unsigned long WEATHER_FAILED_REFRESH_MS = 1UL * 60 * 1000;
 static const unsigned long WAIT_FOR_WIFI_MS = 1000;
 
-bool fetchWeather()
+static bool fetchWeather()
 {
     WiFiClientSecure client;
     client.setInsecure(); // still encrypted, just not checking the cert. fine for public weather data

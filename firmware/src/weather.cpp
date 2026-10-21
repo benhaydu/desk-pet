@@ -16,6 +16,9 @@ static SemaphoreHandle_t weatherLock;
 static const unsigned long WEATHER_REFRESH_MS = 15UL * 60 * 1000;
 static const unsigned long WEATHER_FAILED_REFRESH_MS = 1UL * 60 * 1000;
 static const unsigned long WAIT_FOR_WIFI_MS = 1000;
+static unsigned long weatherVersion = 0;
+static bool haveWeather = false;
+
 
 static bool fetchWeather()
 {
@@ -57,9 +60,25 @@ static bool fetchWeather()
     xSemaphoreTake(weatherLock, portMAX_DELAY);
     lastTemp = temp;
     lastCode = code;
+    haveWeather = true;
+    weatherVersion++;
     xSemaphoreGive(weatherLock);
     Serial.printf("weather: %.1f C, code %d\n", temp, code);
     return true;
+}
+
+bool weatherValid()
+{
+    xSemaphoreTake(weatherLock, portMAX_DELAY);
+    bool valid = haveWeather;
+    xSemaphoreGive(weatherLock);
+    return valid;
+}
+unsigned long weatherVersionNow(){
+    xSemaphoreTake(weatherLock, portMAX_DELAY);
+    unsigned long v = weatherVersion;
+    xSemaphoreGive(weatherLock);
+    return v;
 }
 
 float weatherTemp()

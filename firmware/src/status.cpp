@@ -34,13 +34,18 @@ static void buildStatusText(char *out, size_t outSize)
     struct tm now;
     if (getLocalTime(&now, 0))
     {
-        strftime(timePart, sizeof(timePart), "%H:%M", &now);
+        int hour = now.tm_hour % 12; // 0-23 becomes 0-11
+        if (hour == 0)
+        {
+            hour = 12; // midnight and noon show as 12, not 0
+        }
+        snprintf(timePart, sizeof(timePart), "%d:%02d %s",
+                 hour, now.tm_min, now.tm_hour < 12 ? "AM" : "PM");
     }
     else
     {
         snprintf(timePart, sizeof(timePart), "--:--");
     }
-
     snprintf(out, outSize, "%s   %s", tempPart, timePart);
 }
 

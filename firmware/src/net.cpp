@@ -20,6 +20,8 @@ static const char* const TZ_STRING = "PST8PDT,M3.2.0,M11.1.0";
 
 void networkInit()
 {
+    setenv("TZ", TZ_STRING, 1);
+    tzset();
     retry_timer = millis() - RETRY_MS;
     WiFi.mode(WIFI_STA);
 }

@@ -5,15 +5,17 @@
 #include "eyes.h"
 #include "weather.h"
 #include "status.h"
+#include "console.h"
+
+// #define DEBUG_TIMING   // uncomment to print frame timing once a second
 
 const int FRAME_INTERVAL_MS = 33;
 
-// not static, eyes.cpp uses this through extern
+// not static, eyes.cpp and status.cpp use this through extern
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
 
 unsigned long lastFrameTime = 0;
-static unsigned long lastTimePrint = 0;
 
 void setup()
 {
@@ -37,22 +39,26 @@ void loop()
 {
   if (millis() - lastFrameTime >= FRAME_INTERVAL_MS)
   {
-    unsigned long frameStart = micros();
     lastFrameTime = millis();
 
+#ifdef DEBUG_TIMING
+    unsigned long frameStart = micros();
+#endif
+
     updateEyes();
-    updateStatus();
-    frame.fillRect(REGION_X, REGION_Y, REGION_W, REGION_H, TFT_BLACK); 
+    frame.fillRect(REGION_X, REGION_Y, REGION_W, REGION_H, TFT_BLACK);
     drawEyes();
 
+#ifdef DEBUG_TIMING
     unsigned long drawDone = micros();
+#endif
 
     // push only the box around the eyes
     frame.pushSprite(REGION_X, REGION_Y, REGION_X, REGION_Y, REGION_W, REGION_H);
 
+#ifdef DEBUG_TIMING
     unsigned long pushDone = micros();
 
-    // timing once every 30 frames (~once a second)
     static int frameCount = 0;
     frameCount++;
     if (frameCount >= 30)
@@ -63,27 +69,17 @@ void loop()
                     pushDone - drawDone,
                     pushDone - frameStart);
     }
+#endif
 
-    
+    // only redraws the strip when its text changes
+    updateStatus();
   }
 
   updateNetwork();
 
-  if (millis() - lastTimePrint >= 10000)
+  char question[128];
+  if (readLine(question, sizeof(question)))
   {
-    lastTimePrint = millis();
-    if (!timeIsValid())
-    {
-      Serial.println("time not synced");
-    }
-    else
-    {
-      struct tm now;
-      getLocalTime(&now, 0);
-      char buf[32];
-      strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &now);
-      Serial.println(buf);
-    }
+    Serial.printf("you asked: %s\n", question);
   }
-
 }

@@ -6,6 +6,7 @@
 #include "weather.h"
 #include "status.h"
 #include "console.h"
+#include "ask.h"
 
 // #define DEBUG_TIMING   // uncomment to print frame timing once a second
 
@@ -33,6 +34,7 @@ void setup()
   eyesInit();
   networkInit();
   weatherStart();
+  askStart();
 }
 
 void loop()
@@ -80,6 +82,9 @@ void loop()
   char question[128];
   if (readLine(question, sizeof(question)))
   {
-    Serial.printf("you asked: %s\n", question);
+    if (!askSubmit(question))
+    {
+      Serial.println("Steve's busy, try again in a sec");
+    }
   }
 }

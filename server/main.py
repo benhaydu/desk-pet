@@ -82,4 +82,4 @@ def ask(req: AskRequest) -> AskResponse:
         return ask_llm(req.text)
     except anthropic.APIError as e:
         print("LLM call failed:", e)
-        raise HTTPException(status_code=502, detail="Bolt's brain is unavailable")
+        raise HTTPException(status_code=502, detail="Steve's brain is unavailable")

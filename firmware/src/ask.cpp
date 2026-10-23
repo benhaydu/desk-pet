@@ -1,5 +1,10 @@
 #include "ask.h"
+#include "net.h"
+#include "secrets.h"
 #include <Arduino.h>
+#include <ArduinoJson.h>
+#include <WiFiClient.h>
+#include <HTTPClient.h>
 
 static QueueHandle_t askQueue;
 
@@ -8,6 +13,7 @@ struct Question
     char text[128];
 };
 static void askTask(void *param);
+static void sendQuestion(const char *text);
 
 void askStart()
 {
@@ -37,6 +43,40 @@ static void askTask(void *param)
         if (xQueueReceive(askQueue, &q, portMAX_DELAY) == pdTRUE)
         {
             Serial.printf("ask task got: %s (core %d)\n ", q.text, xPortGetCoreID());
+            sendQuestion(q.text);
         }
     }
 }
+
+static void sendQuestion(const char* text)
+{
+    if (!isOnline())
+    {
+        Serial.println("offline, can't ask");
+        return;
+    }
+
+    // from here on we know we're online, so no nesting needed
+    JsonDocument req;
+    req["text"] = text;
+    String body;
+    serializeJson(req, body);
+
+    // next: WiFiClient, HTTPClient, begin, headers, timeout, POST...
+    WiFiClient client;
+    HTTPClient http;
+    http.begin(client, SERVER_URL);
+
+    http.addHeader("Content-Type", "application/json");
+    http.setTimeout(15000);
+    unsigned long startPost = millis();
+    int status = http.POST(body);
+    unsigned long timeToPost = millis() - startPost;
+    if(status > 0){
+        Serial.printf("Status %d and reply: %s\n",status, http.getString().c_str());
+    }else{
+        Serial.printf("request failed, status %d\n",status);
+    }
+    Serial.printf("time to post: %lu\n", timeToPost);
+    http.end();
+}   

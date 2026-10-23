@@ -87,4 +87,13 @@ void loop()
       Serial.println("Steve's busy, try again in a sec");
     }
   }
+  static unsigned long seenVersion = 0;
+  if (askVersion() != seenVersion)
+  {
+    seenVersion = askVersion();
+    char reply[256];
+    char expr[16];
+    askLatest(reply, sizeof(reply), expr, sizeof(expr));
+    Serial.printf("Steve (%s): %s\n", expr, reply);
+  }
 }

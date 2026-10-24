@@ -32,6 +32,8 @@ const Expression SLEEPY     = {15, 15, 0};
 const Expression HAPPY      = {0, 0, 35};
 const Expression SUSPICIOUS = {35, 35, 35};
 
+Expression expressionFromName(const char* name);
+
 void eyesInit();                     // call once in setup()
 void updateEyes();                   // once per frame, before drawing
 void drawEyes();                     // draws both eyes into the sprite

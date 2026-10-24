@@ -11,12 +11,14 @@
 // #define DEBUG_TIMING   // uncomment to print frame timing once a second
 
 const int FRAME_INTERVAL_MS = 33;
+const int MOOD_HOLD_MS = 8000;
 
 // not static, eyes.cpp and status.cpp use this through extern
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
 
 unsigned long lastFrameTime = 0;
+
 
 void setup()
 {
@@ -39,6 +41,9 @@ void setup()
 
 void loop()
 {
+  static unsigned long moodSetAt = 0;
+  static bool holdingMood = false;
+
   if (millis() - lastFrameTime >= FRAME_INTERVAL_MS)
   {
     lastFrameTime = millis();
@@ -94,6 +99,14 @@ void loop()
     char reply[256];
     char expr[16];
     askLatest(reply, sizeof(reply), expr, sizeof(expr));
+    setExpression(expressionFromName(expr));
+    moodSetAt = millis();
+    holdingMood = true;
     Serial.printf("Steve (%s): %s\n", expr, reply);
+  }
+
+  if(holdingMood == true && millis() - moodSetAt > MOOD_HOLD_MS){
+    setExpression(NEUTRAL);
+    holdingMood = false;
   }
 }

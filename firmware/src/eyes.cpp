@@ -17,7 +17,7 @@ static const int GLANCE_MS = 180;
 static const int MIN_GLANCE = 25;
 
 static const int EXPR_MS = 250;        // how long a morph takes
-static const int EXPR_CYCLE_MS = 3000; // for the test cycler
+
 
 // blink
 enum BlinkState
@@ -53,19 +53,32 @@ static Expression fromExpr = NEUTRAL;
 static Expression toExpr = NEUTRAL;
 static unsigned long exprStart = 0;
 
-static const Expression ALL_EXPRS[] = {NEUTRAL, ANGRY, SAD, SLEEPY, HAPPY, SUSPICIOUS};
-static const int NUM_EXPRS = 6;
-static int exprIndex = 0;
-static unsigned long lastExprChange = 0;
 
 static void updateBlink();
 static void updateGaze();
 static void updateExpression();
-static void cycleExpressions();
 static void drawEye(int cx, int cy, int h, bool isLeftEye);
 static float easeInOut(float t);
 static int lerpInt(int a, int b, float t);
 static Expression lerpExpr(Expression a, Expression b, float t);
+
+
+struct NamedExpression
+{
+    const char* name;
+    Expression expr;
+};
+
+static const NamedExpression EXPRESSIONS[] = {
+    {"neutral", NEUTRAL},
+    {"happy", HAPPY},
+    {"sad", SAD},
+    {"sleepy", SLEEPY},
+    {"angry", ANGRY},
+    {"suspicious", SUSPICIOUS},
+};
+
+static const size_t NUM_EXPRESSIONS = sizeof(EXPRESSIONS) / sizeof(EXPRESSIONS[0]);
 
 void eyesInit()
 {
@@ -76,7 +89,6 @@ void eyesInit()
 void updateEyes()
 {
   updateBlink();
-  cycleExpressions(); // pick the next face before animating toward it
   updateExpression();
   updateGaze();
 }
@@ -94,6 +106,21 @@ void setExpression(Expression next)
   toExpr = next;
   exprStart = millis();
 }
+
+Expression expressionFromName(const char* name)
+{
+    if(name == nullptr){
+      return NEUTRAL;
+    }
+    for(size_t i = 0; i < NUM_EXPRESSIONS; i++){
+        if(strcmp(EXPRESSIONS[i].name, name) == 0){
+          return EXPRESSIONS[i].expr;
+        }
+    }
+    // got all the way through without a match
+    return NEUTRAL;
+}
+
 
 static void updateBlink()
 {
@@ -198,16 +225,6 @@ static void updateExpression()
   currentExpr = lerpExpr(fromExpr, toExpr, easeInOut(t));
 }
 
-// TODO: remove once the behaviour stuff is choosing expressions
-static void cycleExpressions()
-{
-  if (millis() - lastExprChange >= EXPR_CYCLE_MS)
-  {
-    exprIndex = (exprIndex + 1) % NUM_EXPRS;
-    setExpression(ALL_EXPRS[exprIndex]);
-    lastExprChange = millis();
-  }
-}
 
 static void drawEye(int cx, int cy, int h, bool isLeftEye)
 {

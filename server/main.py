@@ -68,18 +68,23 @@ def ask_llm(text: str) -> AskResponse:
 
     response = client.messages.parse(
         model=MODEL,
-        max_tokens=300,
+        max_tokens=2000,
         system=system,
         messages=[{"role": "user", "content": text}],
         output_format=AskResponse,
     )
-    return response.parsed_output
+    result = response.parsed_output
+    if result is None:
+        print("no structured output, stop_reason:", response.stop_reason)
+        raise RuntimeError("model didn't return a usable answer")
+    
+    return result
 
 
 @app.post("/ask")
 def ask(req: AskRequest) -> AskResponse:
     try:
         return ask_llm(req.text)
-    except anthropic.APIError as e:
+    except (anthropic.APIError, RuntimeError) as e:
         print("LLM call failed:", e)
         raise HTTPException(status_code=502, detail="Steve's brain is unavailable")

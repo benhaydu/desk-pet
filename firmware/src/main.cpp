@@ -19,7 +19,6 @@ TFT_eSprite frame = TFT_eSprite(&tft);
 
 unsigned long lastFrameTime = 0;
 
-
 void setup()
 {
   Serial.begin(115200);
@@ -91,6 +90,11 @@ void loop()
     {
       Serial.println("Steve's busy, try again in a sec");
     }
+    else
+    {
+      setExpression(SQUINT);
+      setThinking(true);
+    }
   }
   static unsigned long seenVersion = 0;
   if (askVersion() != seenVersion)
@@ -99,13 +103,15 @@ void loop()
     char reply[256];
     char expr[16];
     askLatest(reply, sizeof(reply), expr, sizeof(expr));
+    setThinking(false);
     setExpression(expressionFromName(expr));
     moodSetAt = millis();
     holdingMood = true;
     Serial.printf("Steve (%s): %s\n", expr, reply);
   }
 
-  if(holdingMood == true && millis() - moodSetAt > MOOD_HOLD_MS){
+  if (holdingMood == true && millis() - moodSetAt > MOOD_HOLD_MS)
+  {
     setExpression(NEUTRAL);
     holdingMood = false;
   }

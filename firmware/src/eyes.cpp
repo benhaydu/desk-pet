@@ -8,7 +8,7 @@ static const int MIN_EYE_HEIGHT = 6;
 static const int BLINK_SPEED = 20;
 static const int CLOSED_HOLD_MS = 40;
 static const int EYE_RADIUS = 18;
-static constexpr uint16_t EYE_COLOR = TFT_PINK;
+static constexpr uint16_t EYE_COLOR = TFT_CYAN;
 static const int LID_PAD = 2; // lids overshoot the eye a bit to hide the anti-aliased edge
 
 static const int LOOK_RANGE_X = REGION_MARGIN_X; // can't look past the margin or it gets cut off
@@ -16,8 +16,13 @@ static const int LOOK_RANGE_Y = REGION_MARGIN_Y;
 static const int GLANCE_MS = 180;
 static const int MIN_GLANCE = 25;
 
-static const int EXPR_MS = 250;        // how long a morph takes
+static const int EXPR_MS = 250; // how long a morph takes
 
+// thinking dots, sitting just under the eyes but still inside the pushed region
+static const int DOT_Y = CENTER_Y + 62;
+static const int DOT_SPACING = 20;
+static const int DOT_RADIUS = 6;
+static const unsigned long DOT_PULSE_MS = 1200;
 
 // blink
 enum BlinkState
@@ -53,20 +58,12 @@ static Expression fromExpr = NEUTRAL;
 static Expression toExpr = NEUTRAL;
 static unsigned long exprStart = 0;
 
-
-static void updateBlink();
-static void updateGaze();
-static void updateExpression();
-static void drawEye(int cx, int cy, int h, bool isLeftEye);
-static float easeInOut(float t);
-static int lerpInt(int a, int b, float t);
-static Expression lerpExpr(Expression a, Expression b, float t);
-
+static bool thinking = false;
 
 struct NamedExpression
 {
-    const char* name;
-    Expression expr;
+  const char *name;
+  Expression expr;
 };
 
 static const NamedExpression EXPRESSIONS[] = {
@@ -76,9 +73,19 @@ static const NamedExpression EXPRESSIONS[] = {
     {"sleepy", SLEEPY},
     {"angry", ANGRY},
     {"suspicious", SUSPICIOUS},
+    {"thinking", SQUINT},
 };
 
 static const size_t NUM_EXPRESSIONS = sizeof(EXPRESSIONS) / sizeof(EXPRESSIONS[0]);
+
+static void updateBlink();
+static void updateGaze();
+static void updateExpression();
+static void drawEye(int cx, int cy, int h, bool isLeftEye);
+static void drawThinkingDots();
+static float easeInOut(float t);
+static int lerpInt(int a, int b, float t);
+static Expression lerpExpr(Expression a, Expression b, float t);
 
 void eyesInit()
 {
@@ -97,6 +104,12 @@ void drawEyes()
 {
   drawEye(CENTER_X - EYE_SPACING, CENTER_Y, eyeHeight, true);
   drawEye(CENTER_X + EYE_SPACING, CENTER_Y, eyeHeight, false);
+
+  // after both eyes so nothing draws over them
+  if (thinking)
+  {
+    drawThinkingDots();
+  }
 }
 
 void setExpression(Expression next)
@@ -107,20 +120,27 @@ void setExpression(Expression next)
   exprStart = millis();
 }
 
-Expression expressionFromName(const char* name)
+void setThinking(bool on)
 {
-    if(name == nullptr){
-      return NEUTRAL;
-    }
-    for(size_t i = 0; i < NUM_EXPRESSIONS; i++){
-        if(strcmp(EXPRESSIONS[i].name, name) == 0){
-          return EXPRESSIONS[i].expr;
-        }
-    }
-    // got all the way through without a match
-    return NEUTRAL;
+  thinking = on;
 }
 
+Expression expressionFromName(const char *name)
+{
+  if (name == nullptr)
+  {
+    return NEUTRAL;
+  }
+  for (size_t i = 0; i < NUM_EXPRESSIONS; i++)
+  {
+    if (strcmp(EXPRESSIONS[i].name, name) == 0)
+    {
+      return EXPRESSIONS[i].expr;
+    }
+  }
+  // got all the way through without a match
+  return NEUTRAL;
+}
 
 static void updateBlink()
 {
@@ -225,7 +245,6 @@ static void updateExpression()
   currentExpr = lerpExpr(fromExpr, toExpr, easeInOut(t));
 }
 
-
 static void drawEye(int cx, int cy, int h, bool isLeftEye)
 {
   int left_edge_x = cx - EYE_WIDTH / 2 + lookX;
@@ -269,6 +288,23 @@ static void drawEye(int cx, int cy, int h, bool isLeftEye)
     frame.fillRect(lidLeft, bottom_edge_y - rise,
                    lidRight - lidLeft, rise + LID_PAD,
                    TFT_BLACK);
+  }
+}
+
+static void drawThinkingDots()
+{
+  for (int i = 0; i < 3; i++)
+  {
+    // each dot runs a little behind the one before it, which makes the wave
+    float phase = (millis() / (float)DOT_PULSE_MS) - i * 0.15f;
+    float brightness = 0.5f + 0.5f * sinf(phase * 2 * PI); // 0..1
+
+    // never fully off, so the dots don't blink out completely
+    uint8_t alpha = 60 + brightness * 195;
+    uint16_t color = frame.alphaBlend(alpha, EYE_COLOR, TFT_BLACK);
+
+    int x = CENTER_X + (i - 1) * DOT_SPACING; // -20, 0, +20
+    frame.fillSmoothCircle(x, DOT_Y, DOT_RADIUS, color, TFT_BLACK);
   }
 }
 

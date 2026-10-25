@@ -52,15 +52,25 @@ void loop()
 #endif
 
     updateEyes();
-    frame.fillRect(REGION_X, REGION_Y, REGION_W, REGION_H, TFT_BLACK);
-    drawEyes();
+
+    Rect r = faceRegion();
+
+    // right after a mode switch the old face is still on screen, so wipe everything once
+    if (faceTakeFullRedraw())
+    {
+      r = {0, 0, 320, 240};
+      statusForceRedraw(); // the full clear wipes the strip too
+    }
+
+    frame.fillRect(r.x, r.y, r.w, r.h, TFT_BLACK);
+    drawFace();
 
 #ifdef DEBUG_TIMING
     unsigned long drawDone = micros();
 #endif
 
-    // push only the box around the eyes
-    frame.pushSprite(REGION_X, REGION_Y, REGION_X, REGION_Y, REGION_W, REGION_H);
+    // only push the part of the screen the face is using
+    frame.pushSprite(r.x, r.y, r.x, r.y, r.w, r.h);
 
 #ifdef DEBUG_TIMING
     unsigned long pushDone = micros();
@@ -77,16 +87,25 @@ void loop()
     }
 #endif
 
-    // only redraws the strip when its text changes
+    // only redraws the strip when its text changes (or after a force)
     updateStatus();
   }
 
   updateNetwork();
 
+  // typed lines: /commands for testing, anything else goes to Steve
   char question[128];
   if (readLine(question, sizeof(question)))
   {
-    if (!askSubmit(question))
+    if (strcmp(question, "/mini") == 0)
+    {
+      setFaceMode(FACE_MINI);
+    }
+    else if (strcmp(question, "/full") == 0)
+    {
+      setFaceMode(FACE_FULL);
+    }
+    else if (!askSubmit(question))
     {
       Serial.println("Steve's busy, try again in a sec");
     }
@@ -96,6 +115,8 @@ void loop()
       setThinking(true);
     }
   }
+
+  // a new answer arrived: react, then hold the mood for a bit
   static unsigned long seenVersion = 0;
   if (askVersion() != seenVersion)
   {
@@ -110,7 +131,8 @@ void loop()
     Serial.printf("Steve (%s): %s\n", expr, reply);
   }
 
-  if (holdingMood == true && millis() - moodSetAt > MOOD_HOLD_MS)
+  // relax back to neutral once, after the hold runs out
+  if (holdingMood && millis() - moodSetAt > MOOD_HOLD_MS)
   {
     setExpression(NEUTRAL);
     holdingMood = false;

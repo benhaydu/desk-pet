@@ -25,6 +25,15 @@ bool readLine(char *out, size_t outSize)
                 return true;
             }
         }
+        else if (c == '\b' || c == 127)
+        {
+            // backspace: forget the last character, if there is one
+            // (lineLen is unsigned, so going below 0 would wrap to a huge number)
+            if (lineLen > 0)
+            {
+                lineLen--;
+            }
+        }
         else if (lineLen < sizeof(lineBuf) - 1)
         {
             // keep one spot free for the '\0', anything past that gets dropped

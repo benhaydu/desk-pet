@@ -74,3 +74,8 @@ void updateStatus()
 
     strcpy(lastDrawn, text);
 }
+void statusForceRedraw()
+{
+  lastDrawn[0] = '\0';                    // empty string never matches, so the next update redraws
+  lastCheck = millis() - STATUS_CHECK_MS; // and don't wait for the 1 second timer
+}

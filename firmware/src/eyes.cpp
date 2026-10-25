@@ -24,6 +24,14 @@ static const int DOT_SPACING = 20;
 static const int DOT_RADIUS = 6;
 static const unsigned long DOT_PULSE_MS = 1200;
 
+static const int MINI_CX = 270;
+static const int MINI_CY = 30;
+static const int MINI_WIDTH = 24;
+static const int MINI_HEIGHT = 30;
+static const int MINI_SPACING = 22;
+static const int MINI_RADIUS = 6;
+static const float MINI_SCALE = MINI_HEIGHT / (float)EYE_HEIGHT;
+
 // blink
 enum BlinkState
 {
@@ -60,6 +68,8 @@ static unsigned long exprStart = 0;
 
 static bool thinking = false;
 
+static const int MINI_MARGIN = 4;
+
 struct NamedExpression
 {
   const char *name;
@@ -78,14 +88,58 @@ static const NamedExpression EXPRESSIONS[] = {
 
 static const size_t NUM_EXPRESSIONS = sizeof(EXPRESSIONS) / sizeof(EXPRESSIONS[0]);
 
+static FaceMode faceMode = FACE_FULL;
+static bool needsFullRedraw = false;
 static void updateBlink();
 static void updateGaze();
 static void updateExpression();
-static void drawEye(int cx, int cy, int h, bool isLeftEye);
+static void drawEye(int cx, int cy,        // where the eye's centre is (offset already added)
+                    int width, int height, // this frame's size (height already includes the blink)
+                    int radius,
+                    float lidScale, // 1.0 for big Steve, MINI_SCALE for mini
+                    bool isLeftEye);
 static void drawThinkingDots();
 static float easeInOut(float t);
 static int lerpInt(int a, int b, float t);
+static void drawEyes();
+static void drawMiniEyes();
 static Expression lerpExpr(Expression a, Expression b, float t);
+
+void setFaceMode(FaceMode mode){
+  if(faceMode == mode){
+    return;
+  }
+  faceMode = mode;
+  needsFullRedraw = true;
+}
+void drawFace(){
+  if(faceMode == FACE_FULL){
+    drawEyes();
+  }else{
+    drawMiniEyes();
+  }
+}
+
+Rect faceRegion()
+{
+  if (faceMode == FACE_FULL)
+  {
+    return {REGION_X, REGION_Y, REGION_W, REGION_H};
+  }
+
+  // same shape as the big REGION_ formulas, just with the mini sizes
+  int x = MINI_CX - MINI_SPACING - MINI_WIDTH / 2 - MINI_MARGIN;
+  int y = MINI_CY - MINI_HEIGHT / 2 - MINI_MARGIN;
+  int w = (MINI_SPACING + MINI_WIDTH / 2 + MINI_MARGIN) * 2;
+  int h = MINI_HEIGHT + MINI_MARGIN * 2;
+  return {x, y, w, h};
+}
+
+bool faceTakeFullRedraw(){
+  bool local = needsFullRedraw;
+  needsFullRedraw = false;
+  return local;
+}
 
 void eyesInit()
 {
@@ -100,16 +154,28 @@ void updateEyes()
   updateGaze();
 }
 
-void drawEyes()
+static void drawEyes()
 {
-  drawEye(CENTER_X - EYE_SPACING, CENTER_Y, eyeHeight, true);
-  drawEye(CENTER_X + EYE_SPACING, CENTER_Y, eyeHeight, false);
-
+  drawEye(CENTER_X - EYE_SPACING + lookX, CENTER_Y + lookY,
+        EYE_WIDTH, eyeHeight, EYE_RADIUS, 1.0f, true);
+  drawEye(CENTER_X + EYE_SPACING + lookX, CENTER_Y + lookY,
+        EYE_WIDTH, eyeHeight, EYE_RADIUS, 1.0f, false);
   // after both eyes so nothing draws over them
   if (thinking)
   {
     drawThinkingDots();
   }
+}
+static void drawMiniEyes()
+{
+  // same blink as big Steve, just as a fraction of the mini height
+  int h = MINI_HEIGHT * (eyeHeight / (float)EYE_HEIGHT);
+
+  // no lookX/lookY here, mini Steve stays put
+  drawEye(MINI_CX - MINI_SPACING, MINI_CY,
+          MINI_WIDTH, h, MINI_RADIUS, MINI_SCALE, true);
+  drawEye(MINI_CX + MINI_SPACING, MINI_CY,
+          MINI_WIDTH, h, MINI_RADIUS, MINI_SCALE, false);
 }
 
 void setExpression(Expression next)
@@ -245,14 +311,18 @@ static void updateExpression()
   currentExpr = lerpExpr(fromExpr, toExpr, easeInOut(t));
 }
 
-static void drawEye(int cx, int cy, int h, bool isLeftEye)
+static void drawEye(int cx, int cy,        // where the eye's centre is (offset already added)
+                    int width, int height, // this frame's size (height already includes the blink)
+                    int radius,
+                    float lidScale, // 1.0 for big Steve, MINI_SCALE for mini
+                    bool isLeftEye)
 {
-  int left_edge_x = cx - EYE_WIDTH / 2 + lookX;
-  int top_edge_y = cy - h / 2 + lookY;
-  int right_edge_x = left_edge_x + EYE_WIDTH;
-  int bottom_edge_y = top_edge_y + h;
+  int left_edge_x = cx - width / 2;
+  int top_edge_y = cy - height / 2;
+  int right_edge_x = left_edge_x + width;
+  int bottom_edge_y = top_edge_y + height;
 
-  frame.fillSmoothRoundRect(left_edge_x, top_edge_y, EYE_WIDTH, h, EYE_RADIUS, EYE_COLOR);
+  frame.fillSmoothRoundRect(left_edge_x, top_edge_y,width, height, radius, EYE_COLOR);
 
   int lidLeft = left_edge_x - LID_PAD;
   int lidRight = right_edge_x + LID_PAD;
@@ -263,13 +333,13 @@ static void drawEye(int cx, int cy, int h, bool isLeftEye)
   int rightDrop;
   if (isLeftEye)
   {
-    leftDrop = currentExpr.lidOuter;
-    rightDrop = currentExpr.lidInner;
+    leftDrop = currentExpr.lidOuter * lidScale;
+    rightDrop = currentExpr.lidInner * lidScale;
   }
   else
   {
-    leftDrop = currentExpr.lidInner;
-    rightDrop = currentExpr.lidOuter;
+    leftDrop = currentExpr.lidInner * lidScale;
+    rightDrop = currentExpr.lidOuter * lidScale;
   }
 
   // top lid is two triangles split along the same diagonal so there's no gap
@@ -284,7 +354,7 @@ static void drawEye(int cx, int cy, int h, bool isLeftEye)
 
   if (currentExpr.lidBottom > 0)
   {
-    int rise = currentExpr.lidBottom;
+    int rise = currentExpr.lidBottom * lidScale;
     frame.fillRect(lidLeft, bottom_edge_y - rise,
                    lidRight - lidLeft, rise + LID_PAD,
                    TFT_BLACK);

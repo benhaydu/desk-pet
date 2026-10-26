@@ -86,6 +86,9 @@ static const NamedExpression EXPRESSIONS[] = {
     {"thinking", SQUINT},
 };
 
+static bool switchPending = false;
+static FaceMode pendingMode = FACE_FULL;
+
 static const size_t NUM_EXPRESSIONS = sizeof(EXPRESSIONS) / sizeof(EXPRESSIONS[0]);
 
 static FaceMode faceMode = FACE_FULL;
@@ -107,10 +110,15 @@ static Expression lerpExpr(Expression a, Expression b, float t);
 
 void setFaceMode(FaceMode mode){
   if(faceMode == mode){
+    switchPending = false;
     return;
+  }else{
+    pendingMode = mode;
+    switchPending = true;
+    if(blinkState == OPEN){
+      blinkState = CLOSING;
+    }
   }
-  faceMode = mode;
-  needsFullRedraw = true;
 }
 void drawFace(){
   if(faceMode == FACE_FULL){
@@ -224,6 +232,11 @@ static void updateBlink()
     if (eyeHeight <= MIN_EYE_HEIGHT)
     {
       eyeHeight = MIN_EYE_HEIGHT;
+      if(switchPending){
+        faceMode = pendingMode;
+        switchPending = false;
+        needsFullRedraw = true;
+      }
       blinkState = CLOSED;
       closedSince = millis();
     }

@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -26,7 +27,7 @@ When it's just chat, be warm and a little playful. Happy is your normal mood.
 
 Keep every reply short: one to three sentences, under 200 characters.
 If a question really needs a long answer, give the core idea and say it's worth
-looking up properly on his computer.
+looking up properly on his computer. Never include links or URLs.
 
 The current local time is {time}.
 Late at night (10 PM to 7 AM) you're sleepy: even shorter answers, and you might
@@ -48,6 +49,17 @@ Choose your expression based on how YOU feel about your reply:
 - angry: rarely, only as playful mock-offence. Never actually hostile.
 """
 
+# characters the board's font can't draw, swapped for plain ASCII ones
+SCREEN_REPLACEMENTS = {
+    "\u201c": '"',    # left double quote
+    "\u201d": '"',    # right double quote
+    "\u2018": "'",    # left single quote
+    "\u2019": "'",    # right single quote / apostrophe
+    "\u2014": "-",    # em dash
+    "\u2013": "-",    # en dash
+    "\u2026": "...",  # ellipsis
+}
+
 # has to match the presets in the firmware exactly
 Expression = Literal["neutral", "happy", "sad", "angry", "sleepy", "suspicious"]
 
@@ -61,6 +73,22 @@ class AskResponse(BaseModel):
     expression: Expression
 
 
+def clean_for_screen(s: str) -> str:
+    # links are useless on the screen and would break the word wrapping
+    s = re.sub(r"https?://\S+|www\.\S+", "", s)
+
+    # fix fancy punctuation first, so it gets swapped rather than deleted below
+    for char, replacement in SCREEN_REPLACEMENTS.items():
+        s = s.replace(char, replacement)
+
+    # anything else outside plain ASCII (emoji, accents) gets dropped
+    s = "".join(c for c in s if ord(c) < 128)
+
+    # removing a URL can leave double spaces behind
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+
 def ask_llm(text: str) -> AskResponse:
     # worked out per request, otherwise it'd be stuck at whenever the server started
     now = datetime.now(TIMEZONE).strftime("%A %I:%M %p")
@@ -68,16 +96,19 @@ def ask_llm(text: str) -> AskResponse:
 
     response = client.messages.parse(
         model=MODEL,
-        max_tokens=2000,
+        max_tokens=2000,  # thinking counts toward this too, so leave room
         system=system,
         messages=[{"role": "user", "content": text}],
         output_format=AskResponse,
     )
+
     result = response.parsed_output
     if result is None:
         print("no structured output, stop_reason:", response.stop_reason)
         raise RuntimeError("model didn't return a usable answer")
-    
+
+    # only the reply text gets cleaned, the expression is already one of the six
+    result.reply = clean_for_screen(result.reply)
     return result
 
 

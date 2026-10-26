@@ -112,12 +112,12 @@ void setFaceMode(FaceMode mode){
   if(faceMode == mode){
     switchPending = false;
     return;
-  }else{
+  }
     pendingMode = mode;
     switchPending = true;
-    if(blinkState == OPEN){
+      if(blinkState == OPEN){
       blinkState = CLOSING;
-    }
+    
   }
 }
 void drawFace(){

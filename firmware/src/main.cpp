@@ -59,7 +59,6 @@ void loop()
     if (faceTakeFullRedraw())
     {
       r = {0, 0, 320, 240};
-      statusForceRedraw(); // the full clear wipes the strip too
     }
 
     frame.fillRect(r.x, r.y, r.w, r.h, TFT_BLACK);
@@ -87,8 +86,6 @@ void loop()
     }
 #endif
 
-    // only redraws the strip when its text changes (or after a force)
-    updateStatus();
   }
 
   updateNetwork();

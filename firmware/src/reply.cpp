@@ -7,11 +7,11 @@ extern TFT_eSprite frame;
 
 // where the text goes: below mini Steve, down to near the bottom of the screen
 static const int TEXT_X = 12;
-static const int TEXT_Y = 56;
+static const int TEXT_Y = 38;
 static const int TEXT_W = 296;
-static const int TEXT_H = 174;
-static const int LINE_H = 20;
-static const int TEXT_FONT = 2;
+static const int TEXT_H = 192;
+static const int LINE_H = 22;
+static const GFXfont *REPLY_FONT = &FreeSansBold9pt7b;
 
 static const int MAX_LINES = 20; // a 256-char reply wraps to ~8, so this is plenty
 static const int LINE_LEN = 100;
@@ -27,8 +27,33 @@ static void finishLine();
 static void addWord(const char *word);
 static void addLongWord(const char *word);
 
+enum ReplyState
+{
+    REPLY_IDLE,      // nothing showing
+    REPLY_PAUSE_TOP, // showing the start, giving you time to begin reading
+    REPLY_SCROLLING, // moving up slowly
+    REPLY_PAUSE_END, // reached the bottom, time to finish reading
+    REPLY_DONE       // finished, waiting for main to hide it
+};
+
+static ReplyState replyState = REPLY_IDLE;
+static unsigned long phaseStart = 0;
+static int scrollY = 0;
+static int maxScroll = 0;  // how far it can scroll (0 = it all fits)
+static bool dirty = false; // something changed, so redraw and push
+
+static const int PAUSE_TOP_MS = 3000;     // was 1500: time to start reading before anything moves
+static const int SCROLL_PX_PER_SEC = 12;  // was 20: about one line every 2 seconds
+static const int PAUSE_END_MS = 3000;     // was 2500: time to finish the last line
+
+static const int SHORT_BASE_MS = 2000;
+static const int SHORT_PER_CHAR_MS = 60;
+static size_t textLen = 0;
+
 void replyShow(const char *text)
 {
+    frame.setFreeFont(REPLY_FONT);
+
     // start fresh
     lineCount = 0;
     current[0] = '\0';
@@ -56,11 +81,17 @@ void replyShow(const char *text)
     }
     finishLine();
 
-    // test print, delete once drawing works
-    for (int i = 0; i < lineCount; i++)
+    int totalHeight = lineCount * LINE_H;
+    maxScroll = totalHeight - TEXT_H;
+    if (maxScroll < 0)
     {
-        Serial.printf("%2d [%s] %d px\n", i, lines[i], frame.textWidth(lines[i], TEXT_FONT));
+        maxScroll = 0;
     }
+    scrollY = 0;
+    phaseStart = millis();
+    textLen = strlen(text);
+    replyState = REPLY_PAUSE_TOP;
+    dirty = true;
 }
 
 // copies current into the next slot in lines and empties current
@@ -81,7 +112,7 @@ static void finishLine()
 static void addWord(const char *word)
 {
     // a word that can't fit even on a line by itself gets split up instead
-    if (frame.textWidth(word, TEXT_FONT) > TEXT_W)
+    if (frame.textWidth(word) > TEXT_W)
     {
         addLongWord(word);
         return;
@@ -98,7 +129,7 @@ static void addWord(const char *word)
         snprintf(candidate, sizeof(candidate), "%s %s", current, word);
     }
 
-    if (frame.textWidth(candidate, TEXT_FONT) <= TEXT_W)
+    if (frame.textWidth(candidate) <= TEXT_W)
     {
         // it fits, keep it
         snprintf(current, sizeof(current), "%s", candidate);
@@ -123,7 +154,7 @@ static void addLongWord(const char *word)
         char candidate[LINE_LEN];
         snprintf(candidate, sizeof(candidate), "%s%c", current, word[i]);
 
-        if (frame.textWidth(candidate, TEXT_FONT) > TEXT_W)
+        if (frame.textWidth(candidate) > TEXT_W)
         {
             // that character would go past the edge, so finish this line
             // and start the next one with just that character
@@ -136,4 +167,102 @@ static void addLongWord(const char *word)
 
     // whatever's left of the word stays in current, so the next normal
     // word can carry on from it on the same line
+}
+
+void updateReply()
+{
+    unsigned long time_elapsed = millis() - phaseStart;
+
+    switch (replyState)
+    {
+    case REPLY_PAUSE_TOP:
+        if (maxScroll == 0)
+        {
+            if (time_elapsed >= SHORT_BASE_MS + textLen * SHORT_PER_CHAR_MS)
+            {
+                replyState = REPLY_DONE;
+            }
+        }
+        else
+        {
+            if (time_elapsed >= PAUSE_TOP_MS)
+            {
+                phaseStart = millis();
+                replyState = REPLY_SCROLLING;
+            }
+        }
+        break;
+
+    case REPLY_SCROLLING:
+    {
+        int newY = time_elapsed * SCROLL_PX_PER_SEC / 1000;
+        if (newY >= maxScroll)
+        {
+            newY = maxScroll;
+            phaseStart = millis();
+            replyState = REPLY_PAUSE_END;
+        }
+        if (newY != scrollY)
+        {
+            scrollY = newY;
+            dirty = true;
+        }
+        break;
+    }
+    case REPLY_PAUSE_END:
+        if (time_elapsed >= PAUSE_END_MS)
+        {
+            replyState = REPLY_DONE;
+        }
+
+        break;
+    default:
+        break;
+    }
+}
+
+void drawReply()
+{
+    if (!dirty)
+    {
+        return;
+    }
+    frame.setViewport(TEXT_X, TEXT_Y, TEXT_W, TEXT_H, false);
+    frame.fillRect(TEXT_X, TEXT_Y, TEXT_W, TEXT_H, TFT_BLACK);
+    frame.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
+    frame.setTextDatum(TL_DATUM);
+    frame.setFreeFont(REPLY_FONT);
+    frame.setTextDatum(TL_DATUM);
+
+    for (int i = 0; i < lineCount; i++)
+    {
+        int y = TEXT_Y + i * LINE_H - scrollY;
+        if (y + LINE_H <= TEXT_Y)
+        {
+            continue;
+        }
+        else if (y >= TEXT_Y + TEXT_H)
+        {
+            continue;
+        }
+        frame.drawString(lines[i], TEXT_X, y);
+    }
+
+    frame.resetViewport();
+    frame.pushSprite(TEXT_X, TEXT_Y, TEXT_X, TEXT_Y, TEXT_W, TEXT_H);
+    dirty = false;
+}
+bool replyActive()
+{
+    // showing means anything between appearing and being finished
+    return replyState != REPLY_IDLE && replyState != REPLY_DONE;
+}
+
+void replyHide()
+{
+    // blank the text area on screen, not just in the sprite
+    frame.fillRect(TEXT_X, TEXT_Y, TEXT_W, TEXT_H, TFT_BLACK);
+    frame.pushSprite(TEXT_X, TEXT_Y, TEXT_X, TEXT_Y, TEXT_W, TEXT_H);
+    replyState = REPLY_IDLE;
+    dirty = false;
 }

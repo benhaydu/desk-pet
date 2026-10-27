@@ -24,12 +24,13 @@ static const int DOT_SPACING = 20;
 static const int DOT_RADIUS = 6;
 static const unsigned long DOT_PULSE_MS = 1200;
 
-static const int MINI_CX = 270;
-static const int MINI_CY = 30;
-static const int MINI_WIDTH = 24;
-static const int MINI_HEIGHT = 30;
-static const int MINI_SPACING = 22;
-static const int MINI_RADIUS = 6;
+static const int MINI_CX = 292;
+static const int MINI_CY = 20;
+static const int MINI_WIDTH = 14;
+static const int MINI_HEIGHT = 18;
+static const int MINI_SPACING = 12;
+static const int MINI_RADIUS = 4;
+static const int MINI_MARGIN = 3;
 static const float MINI_SCALE = MINI_HEIGHT / (float)EYE_HEIGHT;
 
 // blink
@@ -68,7 +69,6 @@ static unsigned long exprStart = 0;
 
 static bool thinking = false;
 
-static const int MINI_MARGIN = 4;
 
 struct NamedExpression
 {

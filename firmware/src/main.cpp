@@ -4,7 +4,7 @@
 #include "pins.h"
 #include "eyes.h"
 #include "weather.h"
-#include "status.h"
+
 #include "console.h"
 #include "ask.h"
 #include "reply.h"
@@ -14,7 +14,7 @@
 const int FRAME_INTERVAL_MS = 33;
 const int MOOD_HOLD_MS = 8000;
 
-// not static, eyes.cpp and status.cpp use this through extern
+// not static, eyes.cpp and reply.cpp use this through extern
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
 
@@ -64,13 +64,15 @@ void loop()
 
     frame.fillRect(r.x, r.y, r.w, r.h, TFT_BLACK);
     drawFace();
-
 #ifdef DEBUG_TIMING
     unsigned long drawDone = micros();
 #endif
 
     // only push the part of the screen the face is using
     frame.pushSprite(r.x, r.y, r.x, r.y, r.w, r.h);
+
+    updateReply();
+    drawReply();
 
 #ifdef DEBUG_TIMING
     unsigned long pushDone = micros();
@@ -88,7 +90,7 @@ void loop()
 #endif
   }
 
-   updateNetwork();
+  updateNetwork();
 
   // typed lines: /commands for testing, anything else goes to Steve
   char question[128];
@@ -108,6 +110,17 @@ void loop()
                 "and everyone else waits outside until it is handed back. That stops two "
                 "tasks from changing the same data at once. "
                 "Thisisaverylongwordthatcannotpossiblyfitononelineofthescreenatall and then normal text again.");
+    }
+    else if (strcmp(question, "/long") == 0)
+    {
+      replyShow("A mutex is like a key to a single bathroom: whoever holds it gets in, "
+                "and everyone else waits outside until it is handed back. That stops two "
+                "tasks from changing the same data at once. A queue is different: it is "
+                "more like a mailbox, where one task drops a message in and another takes "
+                "it out later, so they never touch the same thing at the same moment. "
+                "Steve uses both: a queue to pass your question to the ask task on core "
+                "zero, and a mutex to guard the answer while it is copied back. Between "
+                "them, the eyes keep blinking at thirty frames a second the whole time.");
     }
     else if (!askSubmit(question))
     {

@@ -7,6 +7,7 @@
 #include "status.h"
 #include "console.h"
 #include "ask.h"
+#include "reply.h"
 
 // #define DEBUG_TIMING   // uncomment to print frame timing once a second
 
@@ -85,10 +86,9 @@ void loop()
                     pushDone - frameStart);
     }
 #endif
-
   }
 
-  updateNetwork();
+   updateNetwork();
 
   // typed lines: /commands for testing, anything else goes to Steve
   char question[128];
@@ -101,6 +101,13 @@ void loop()
     else if (strcmp(question, "/full") == 0)
     {
       setFaceMode(FACE_FULL);
+    }
+    else if (strcmp(question, "/wrap") == 0)
+    {
+      replyShow("A mutex is like a key to a single bathroom: whoever holds it gets in, "
+                "and everyone else waits outside until it is handed back. That stops two "
+                "tasks from changing the same data at once. "
+                "Thisisaverylongwordthatcannotpossiblyfitononelineofthescreenatall and then normal text again.");
     }
     else if (!askSubmit(question))
     {

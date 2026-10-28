@@ -55,3 +55,4 @@ void drawFace();
 void setFaceMode(FaceMode mode);
 Rect faceRegion();
 bool faceTakeFullRedraw();   // true once after a mode switch, then false
+bool faceIsMini(); // true once mini Steve is really showing, not just requested

@@ -69,7 +69,6 @@ static unsigned long exprStart = 0;
 
 static bool thinking = false;
 
-
 struct NamedExpression
 {
   const char *name;
@@ -108,22 +107,36 @@ static void drawEyes();
 static void drawMiniEyes();
 static Expression lerpExpr(Expression a, Expression b, float t);
 
-void setFaceMode(FaceMode mode){
-  if(faceMode == mode){
+bool faceIsMini()
+{
+  return (faceMode == FACE_MINI && !switchPending);
+}
+
+void setFaceMode(FaceMode mode)
+{
+  if (faceMode == mode)
+  {
     switchPending = false;
     return;
   }
-    pendingMode = mode;
-    switchPending = true;
-      if(blinkState == OPEN){
-      blinkState = CLOSING;
-    
+  pendingMode = mode;
+  switchPending = true;
+  if (blinkState == OPEN)
+  {
+    if (switchPending)
+    {
+      blinkState = CLOSING; // a switch came in mid-blink, so blink again right away
+    }
   }
 }
-void drawFace(){
-  if(faceMode == FACE_FULL){
+void drawFace()
+{
+  if (faceMode == FACE_FULL)
+  {
     drawEyes();
-  }else{
+  }
+  else
+  {
     drawMiniEyes();
   }
 }
@@ -143,7 +156,8 @@ Rect faceRegion()
   return {x, y, w, h};
 }
 
-bool faceTakeFullRedraw(){
+bool faceTakeFullRedraw()
+{
   bool local = needsFullRedraw;
   needsFullRedraw = false;
   return local;
@@ -165,9 +179,9 @@ void updateEyes()
 static void drawEyes()
 {
   drawEye(CENTER_X - EYE_SPACING + lookX, CENTER_Y + lookY,
-        EYE_WIDTH, eyeHeight, EYE_RADIUS, 1.0f, true);
+          EYE_WIDTH, eyeHeight, EYE_RADIUS, 1.0f, true);
   drawEye(CENTER_X + EYE_SPACING + lookX, CENTER_Y + lookY,
-        EYE_WIDTH, eyeHeight, EYE_RADIUS, 1.0f, false);
+          EYE_WIDTH, eyeHeight, EYE_RADIUS, 1.0f, false);
   // after both eyes so nothing draws over them
   if (thinking)
   {
@@ -232,7 +246,8 @@ static void updateBlink()
     if (eyeHeight <= MIN_EYE_HEIGHT)
     {
       eyeHeight = MIN_EYE_HEIGHT;
-      if(switchPending){
+      if (switchPending)
+      {
         faceMode = pendingMode;
         switchPending = false;
         needsFullRedraw = true;
@@ -335,7 +350,7 @@ static void drawEye(int cx, int cy,        // where the eye's centre is (offset 
   int right_edge_x = left_edge_x + width;
   int bottom_edge_y = top_edge_y + height;
 
-  frame.fillSmoothRoundRect(left_edge_x, top_edge_y,width, height, radius, EYE_COLOR);
+  frame.fillSmoothRoundRect(left_edge_x, top_edge_y, width, height, radius, EYE_COLOR);
 
   int lidLeft = left_edge_x - LID_PAD;
   int lidRight = right_edge_x + LID_PAD;

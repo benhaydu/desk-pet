@@ -3,7 +3,7 @@
 #include "secrets.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <WiFiClient.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 
 struct Question
@@ -96,19 +96,29 @@ static void sendQuestion(const char *text)
     String body;
     serializeJson(req, body);
 
-    WiFiClient client;
+    WiFiClientSecure client;
     HTTPClient http;
+    client.setInsecure();
     http.begin(client, SERVER_URL);
     http.addHeader("Content-Type", "application/json");
-    http.setTimeout(15000); // LLM replies take a few seconds
+    http.addHeader("X-Steve-Key", STEVE_KEY);
+    http.setTimeout(60000); // Render's free tier can take up to a minute to wake up
 
     unsigned long postStart = millis();
     int status = http.POST(body);
     unsigned long postTime = millis() - postStart;
 
+    if (status == 401)
+    {
+        Serial.println("ask rejected: STEVE_KEY doesn't match the server");
+        http.end();
+        storeAnswer("My key doesn't fit the door.", "suspicious");
+        return;
+    }
+
     if (status != 200)
     {
-        // negative = never reached the server (PC off, uvicorn stopped, timeout)
+       // negative = never got a response (Render down, no Wi-Fi, timed out)
         Serial.printf("ask failed, status %d after %lu ms\n", status, postTime);
         http.end();
         storeAnswer("I can't reach my brain right now.", "sad");

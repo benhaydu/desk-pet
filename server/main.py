@@ -1,15 +1,20 @@
 import re
+import os
+import secrets
 from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 import anthropic
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 
-# pull ANTHROPIC_API_KEY out of .env before anything needs it
+# pull ANTHROPIC_API_KEY, steve key out of .env before anything needs it
 load_dotenv()
+steve_key = os.environ["STEVE_KEY"]
+if not steve_key:
+    raise RuntimeError("STEVE_KEY is empty, refusing to start")
 
 app = FastAPI()
 client = anthropic.Anthropic()
@@ -113,7 +118,10 @@ def ask_llm(text: str) -> AskResponse:
 
 
 @app.post("/ask")
-def ask(req: AskRequest) -> AskResponse:
+def ask(req: AskRequest, x_steve_key: str = Header(default="")) -> AskResponse:
+    if not secrets.compare_digest(x_steve_key, steve_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
     try:
         return ask_llm(req.text)
     except (anthropic.APIError, RuntimeError) as e:

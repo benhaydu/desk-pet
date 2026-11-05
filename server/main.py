@@ -1,12 +1,14 @@
 import re
 import os
 import secrets
+import json
 from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
 
 import anthropic
 from dotenv import load_dotenv
+from weather import get_weather
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 
@@ -42,7 +44,7 @@ Your screen can only show basic text:
 - Plain text only. No code, markdown, emoji, lists or special symbols.
 - Use straight quotes and plain hyphens.
 
-You don't have live data yet (weather, rivers, news). If asked, say you're still
+You can check live weather with your tool; you don't have river or news data yet. If asked, say you're still
 learning that trick. If you're not sure about something, say so. Never make up facts.
 
 Choose your expression based on how YOU feel about your reply:
@@ -64,6 +66,35 @@ SCREEN_REPLACEMENTS = {
     "\u2013": "-",    # en dash
     "\u2026": "...",  # ellipsis
 }
+
+# what Claude can ask the server to run, the descriptions are how it decides when
+TOOLS = [
+    {
+        "name": "get_weather",
+        "description": (
+            "Gets live weather for a place: current temperature and conditions, plus "
+            "today's and tomorrow's high, low, rain chance and conditions. Use it for "
+            "any question about the weather, temperature, rain, snow, or what to wear "
+            "or bring outside, even if the word 'weather' isn't used. Don't guess the "
+            "weather without it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "location": {
+                    "type": "string",
+                    "description": (
+                        "City plus province or state, like 'Victoria, BC' or "
+                        "'Seattle, WA'. If Ben doesn't name a place, use 'Victoria, BC'."
+                    ),
+                },
+            },
+            "required": ["location"],
+        },
+    }
+]
+
+MAX_TOOL_ROUNDS = 3
 
 # has to match the presets in the firmware exactly
 Expression = Literal["neutral", "happy", "sad", "angry", "sleepy", "suspicious"]
@@ -98,14 +129,40 @@ def ask_llm(text: str) -> AskResponse:
     # worked out per request, otherwise it'd be stuck at whenever the server started
     now = datetime.now(TIMEZONE).strftime("%A %I:%M %p")
     system = SYSTEM_PROMPT.format(time=now)
+    messages=[{"role": "user", "content": text}]
 
-    response = client.messages.parse(
-        model=MODEL,
-        max_tokens=2000,  # thinking counts toward this too, so leave room
-        system=system,
-        messages=[{"role": "user", "content": text}],
-        output_format=AskResponse,
-    )
+    for _ in range(MAX_TOOL_ROUNDS):
+        response = client.messages.parse(
+            model=MODEL,
+            max_tokens=2000,  # thinking counts toward this too, so leave room
+            system=system,
+            messages=messages,
+            output_format=AskResponse,
+            tools=TOOLS,
+        )
+
+        if response.stop_reason != "tool_use":
+            break
+
+        messages.append({"role": "assistant", "content": response.content})
+
+        tool_results = []
+        for block in response.content:
+            if block.type == "tool_use":
+                print(f"tool call: {block.name} {block.input}")
+
+                if block.name == "get_weather":
+                    output = get_weather(block.input["location"])
+                else:
+                    output = {"error": f"unknown tool {block.name}"}
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(output),
+                    "is_error": "error" in output,
+                })
+        messages.append({"role": "user", "content": tool_results})
 
     result = response.parsed_output
     if result is None:

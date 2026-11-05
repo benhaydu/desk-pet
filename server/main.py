@@ -13,11 +13,15 @@ from pydantic import BaseModel
 
 from weather import get_weather
 
-# pull ANTHROPIC_API_KEY, steve key out of .env before anything needs it
+# pull the API keys out of .env before anything needs them
 load_dotenv()
 steve_key = os.environ["STEVE_KEY"]
 if not steve_key:
     raise RuntimeError("STEVE_KEY is empty, refusing to start")
+weather_key = os.environ["WEATHER_API_KEY"]
+if not weather_key:
+    raise RuntimeError("WEATHER_API_KEY is empty, refusing to start")
+
 
 app = FastAPI()
 client = anthropic.Anthropic()

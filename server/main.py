@@ -8,9 +8,10 @@ from zoneinfo import ZoneInfo
 
 import anthropic
 from dotenv import load_dotenv
-from weather import get_weather
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
+
+from weather import get_weather
 
 # pull ANTHROPIC_API_KEY, steve key out of .env before anything needs it
 load_dotenv()
@@ -99,6 +100,17 @@ MAX_TOOL_ROUNDS = 3
 # has to match the presets in the firmware exactly
 Expression = Literal["neutral", "happy", "sad", "angry", "sleepy", "suspicious"]
 
+SCENE_FOR = {"clear": "sun", "cloudy": "cloud", 
+             "rain": "rain", "snow": "snow", 
+             "storm": "storm", "fog": "fog",}
+
+Scene = Literal["none", "sun", "cloud", "rain", "snow", "fog", "storm"]
+
+class SteveResponse(BaseModel):
+    reply: str
+    expression: Expression
+    scene: Scene
+    data: dict = {}
 
 class AskRequest(BaseModel):
     text: str
@@ -107,6 +119,12 @@ class AskRequest(BaseModel):
 class AskResponse(BaseModel):
     reply: str
     expression: Expression
+
+def pick_scene(weather) -> str:
+    # no weather lookup, or weather we have no scene for, means no scene
+    if not weather:
+        return "none"
+    return SCENE_FOR.get(weather["today"]["main_conditions"], "none")
 
 
 def clean_for_screen(s: str) -> str:
@@ -125,11 +143,12 @@ def clean_for_screen(s: str) -> str:
     return s
 
 
-def ask_llm(text: str) -> AskResponse:
+def ask_llm(text: str) -> SteveResponse:
     # worked out per request, otherwise it'd be stuck at whenever the server started
     now = datetime.now(TIMEZONE).strftime("%A %I:%M %p")
     system = SYSTEM_PROMPT.format(time=now)
-    messages=[{"role": "user", "content": text}]
+    messages = [{"role": "user", "content": text}]
+    weather = None  # stays None unless a weather lookup works
 
     for _ in range(MAX_TOOL_ROUNDS):
         response = client.messages.parse(
@@ -141,6 +160,7 @@ def ask_llm(text: str) -> AskResponse:
             tools=TOOLS,
         )
 
+        # anything other than a tool request means Claude has its answer
         if response.stop_reason != "tool_use":
             break
 
@@ -153,7 +173,10 @@ def ask_llm(text: str) -> AskResponse:
 
                 if block.name == "get_weather":
                     output = get_weather(block.input["location"])
+                    if "error" not in output:
+                        weather = output
                 else:
+                    # every tool_use needs a result, even one we don't know
                     output = {"error": f"unknown tool {block.name}"}
 
                 tool_results.append({
@@ -162,6 +185,7 @@ def ask_llm(text: str) -> AskResponse:
                     "content": json.dumps(output),
                     "is_error": "error" in output,
                 })
+
         messages.append({"role": "user", "content": tool_results})
 
     result = response.parsed_output
@@ -169,13 +193,26 @@ def ask_llm(text: str) -> AskResponse:
         print("no structured output, stop_reason:", response.stop_reason)
         raise RuntimeError("model didn't return a usable answer")
 
-    # only the reply text gets cleaned, the expression is already one of the six
-    result.reply = clean_for_screen(result.reply)
-    return result
+    # only the numbers a scene might draw, empty when there was no weather lookup
+    data = {}
+    if weather:
+        data = {
+            "temp_c": weather["now"]["temp_c"],
+            "high_c": weather["today"]["high_c"],
+            "low_c": weather["today"]["low_c"],
+        }
+
+    # Claude wrote the reply and picked the mood, the scene comes from the data
+    return SteveResponse(
+        reply=clean_for_screen(result.reply),
+        expression=result.expression,
+        scene=pick_scene(weather),
+        data=data,
+    )
 
 
 @app.post("/ask")
-def ask(req: AskRequest, x_steve_key: str = Header(default="")) -> AskResponse:
+def ask(req: AskRequest, x_steve_key: str = Header(default="")) -> SteveResponse:
     if not secrets.compare_digest(x_steve_key, steve_key):
         raise HTTPException(status_code=401, detail="Unauthorized")
     

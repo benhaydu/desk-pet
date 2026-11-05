@@ -1,4 +1,5 @@
 import httpx
+from collections import Counter
 
 # Open-Meteo's WMO weather codes, in words Claude can write from
 WEATHER_WORDS = {
@@ -31,7 +32,24 @@ WEATHER_WORDS = {
     96: "thunderstorm with hail",
     99: "thunderstorm with hail",
 }
+WAKING_START = 5    # 5 am
+WAKING_END = 24     # midnight, the end of the day
 
+def _category(code):
+    if code in (0, 1):
+        return "clear"
+    elif code in (2, 3):
+        return "cloudy"
+    elif code in (45, 48):
+        return "fog"
+    elif(51 <= code <= 67 or 80 <= code <= 82):
+        return "rain"
+    elif(71 <= code <= 77 or code in (85, 86)):
+        return "snow"
+    elif(95 <= code <= 99):
+        return "storm"
+
+    return "unknown"
 
 def _get_coords(city_name):
     # turns a place name into coordinates, None if it can't
@@ -62,15 +80,35 @@ def _get_coords(city_name):
         return None
 
 
-def _day(daily, i):
+def _day(daily, hourly, i):
     # one day out of the daily lists, 0 is today and 1 is tomorrow
-    code = daily["weather_code"][i]
+    worst_code = daily["weather_code"][i]
+    date = daily["time"][i]
+    hourly_weather = []
+    rain_likely_hours = []
+    for t, hour_code, rain_pct in zip(hourly["time"], hourly["weather_code"], hourly["precipitation_probability"]):
+        if t[:10] != date:
+            continue
+        hour = int(t[11:13])
+        if not (WAKING_START <= hour < WAKING_END):
+            continue
+        hourly_weather.append(_category(hour_code)) 
+        if rain_pct is not None and rain_pct >= 50:
+            rain_likely_hours.append(t[11:16]) 
+
+    if hourly_weather:
+        main_conditions = Counter(hourly_weather).most_common(1)[0][0]
+    else:
+        main_conditions = "unknown"
+
     return {
         "high_c": daily["temperature_2m_max"][i],
         "low_c": daily["temperature_2m_min"][i],
         "rain_chance_pct": daily["precipitation_probability_max"][i],
-        "code": code,
-        "conditions": WEATHER_WORDS.get(code, "unknown"),
+        "main_conditions": main_conditions,
+        "rain_likely_hours": rain_likely_hours,
+        "worst_code": worst_code,
+        "worst_conditions": WEATHER_WORDS.get(worst_code, "unknown"),
     }
 
 
@@ -90,6 +128,7 @@ def get_weather(location: str):
         "longitude": coords["lon"],
         "current": "temperature_2m,weather_code",
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+        "hourly": "weather_code,precipitation_probability",
         "timezone": "auto",
         "forecast_days": 2,
     }
@@ -101,6 +140,7 @@ def get_weather(location: str):
 
         current = data["current"]
         daily = data["daily"]
+        hourly = data["hourly"]
         now_code = current["weather_code"]
 
         return {
@@ -110,8 +150,8 @@ def get_weather(location: str):
                 "code": now_code,
                 "conditions": WEATHER_WORDS.get(now_code, "unknown"),
             },
-            "today": _day(daily, 0),
-            "tomorrow": _day(daily, 1),
+            "today": _day(daily, hourly, 0),
+            "tomorrow": _day(daily, hourly,  1),
         }
     except (httpx.HTTPError, KeyError, IndexError) as e:
         print(f"weather request failed: {e}")

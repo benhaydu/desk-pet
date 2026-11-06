@@ -21,8 +21,7 @@ static SemaphoreHandle_t answerLock;
 static void askTask(void *param);
 static void sendQuestion(const char *text);
 static void storeAnswer(const Answer &a);
-static void storeFallback(const char *reply, const char *expr);
-
+static void storeFallback(const char *headline, const char *reply, const char *expr);
 void askStart()
 {
     // queue and lock have to exist before the task starts using them
@@ -79,9 +78,10 @@ static void storeAnswer(const Answer &a)
 }
 
 // for the error cases: a canned line, no scene, no weather
-static void storeFallback(const char *reply, const char *expr)
+static void storeFallback(const char *headline, const char *reply, const char *expr)
 {
     Answer a;
+    snprintf(a.headline, sizeof(a.headline), "%s", headline);
     snprintf(a.reply, sizeof(a.reply), "%s", reply);
     snprintf(a.expression, sizeof(a.expression), "%s", expr);
     snprintf(a.scene, sizeof(a.scene), "none");
@@ -94,7 +94,7 @@ static void sendQuestion(const char *text)
     if (!isOnline())
     {
         Serial.println("offline, can't ask");
-        storeFallback("I'm offline right now.", "sad");
+        storeFallback("Brain offline", "I'm offline right now. No wifi connection", "sad");
         return;
     }
 
@@ -120,7 +120,7 @@ static void sendQuestion(const char *text)
     {
         Serial.println("ask rejected: STEVE_KEY doesn't match the server");
         http.end();
-        storeFallback("My key doesn't fit the door.", "suspicious");
+        storeFallback("Wrong key", "My key doesn't fit the door.", "suspicious");
         return;
     }
 
@@ -129,7 +129,7 @@ static void sendQuestion(const char *text)
         // negative = never got a response (Render down, no Wi-Fi, timed out)
         Serial.printf("ask failed, status %d after %lu ms\n", status, postTime);
         http.end();
-        storeFallback("I can't reach my brain right now.", "sad");
+        storeFallback("Brain offline", "I can't reach my brain right now.", "sad");
         return;
     }
 
@@ -142,14 +142,14 @@ static void sendQuestion(const char *text)
     if (err)
     {
         Serial.printf("ask reply parse failed: %s\n", err.c_str());
-        storeFallback("Hmm, my thoughts got scrambled. Try again?", "suspicious");
+        storeFallback("Scrambled", "Hmm, my thoughts got scrambled. Try again?", "suspicious");
         return;
     }
 
     if (!doc["reply"].is<const char *>() || !doc["expression"].is<const char *>())
     {
         Serial.println("ask reply missing fields");
-        storeFallback("Hmm, my thoughts got scrambled. Try again?", "suspicious");
+        storeFallback("Scrambled", "Hmm, my thoughts got scrambled. Try again?", "suspicious");
         return;
     }
 
@@ -157,6 +157,7 @@ static void sendQuestion(const char *text)
     snprintf(a.reply, sizeof(a.reply), "%s", (const char *)doc["reply"]);
     snprintf(a.expression, sizeof(a.expression), "%s", (const char *)doc["expression"]);
     // scene and data are optional, so fall back if the server didn't send them
+    snprintf(a.headline, sizeof(a.headline), "%s", doc["headline"] | "");
     snprintf(a.scene, sizeof(a.scene), "%s", doc["scene"] | "none");
     a.tempC = doc["data"]["temp_c"] | NAN;
     a.highC = doc["data"]["high_c"] | NAN;

@@ -6,29 +6,18 @@
 #include "weather.h"
 #include "console.h"
 #include "ask.h"
-#include "reply.h"
+#include "headline.h"
 
 // #define DEBUG_TIMING   // uncomment to print frame timing once a second
 
 const int FRAME_INTERVAL_MS = 33;
-const int MOOD_HOLD_MS = 8000;
+const int MOOD_HOLD_MS = 8000; // a bit longer than the longest headline (7 s)
 
-// not static, eyes.cpp and reply.cpp use this through extern
+// not static, eyes.cpp and headline.cpp use this through extern
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
 
 unsigned long lastFrameTime = 0;
-
-enum TalkState
-{
-  TALK_IDLE,      // big Steve, nothing to say
-  TALK_WAIT_MINI, // answer's here, waiting for the blink swap to mini
-  TALK_SHOWING    // text is on screen
-};
-static TalkState talkState = TALK_IDLE;
-static char pendingReply[768]; // holds the text until mini Steve is ready
-
-static void startTalking(const char *text);
 
 void setup()
 {
@@ -97,9 +86,9 @@ void loop()
     }
 #endif
 
-    // after the face push, so a full-screen clear can never wipe fresh text
-    updateReply();
-    drawReply();
+    // after the face push, so a full-screen clear can never wipe a fresh headline
+    updateHeadline();
+    drawHeadline();
   }
 
   updateNetwork();
@@ -116,23 +105,13 @@ void loop()
     {
       setFaceMode(FACE_FULL);
     }
-    else if (strcmp(question, "/wrap") == 0)
+    else if (strcmp(question, "/head") == 0)
     {
-      startTalking("A mutex is like a key to a single bathroom: whoever holds it gets in, "
-                   "and everyone else waits outside until it is handed back. That stops two "
-                   "tasks from changing the same data at once. "
-                   "Thisisaverylongwordthatcannotpossiblyfitononelineofthescreenatall and then normal text again.");
+      headlineShow("Hey Ben!"); // short, should get the biggest font
     }
-    else if (strcmp(question, "/long") == 0)
+    else if (strcmp(question, "/headlong") == 0)
     {
-      startTalking("A mutex is like a key to a single bathroom: whoever holds it gets in, "
-                   "and everyone else waits outside until it is handed back. That stops two "
-                   "tasks from changing the same data at once. A queue is different: it is "
-                   "more like a mailbox, where one task drops a message in and another takes "
-                   "it out later, so they never touch the same thing at the same moment. "
-                   "Steve uses both: a queue to pass your question to the ask task on core "
-                   "zero, and a mutex to guard the answer while it is copied back. Between "
-                   "them, the eyes keep blinking at thirty frames a second the whole time.");
+      headlineShow("Locks stop two threads at once"); // 30 chars, should drop a size or two
     }
     else if (!askSubmit(question))
     {
@@ -140,47 +119,36 @@ void loop()
     }
     else
     {
-      // a new question cuts off whatever he was saying
-      if (talkState != TALK_IDLE)
-      {
-        replyHide();
-        setFaceMode(FACE_FULL);
-        talkState = TALK_IDLE;
-      }
-      holdingMood = false; // the thinking face takes over from any old reaction
-      setExpression(SQUINT);
+      // a new question clears the old answer and any reaction still being held
+      headlineHide();
+      holdingMood = false;
+      setExpression(THINKING);
       setThinking(true);
     }
   }
 
-  // a new answer arrived: react, then start the talking sequence
+  // a new answer arrived: react with the face, label it with the headline
   static unsigned long seenVersion = 0;
   if (askVersion() != seenVersion)
   {
     seenVersion = askVersion();
     Answer a;
     askLatest(a);
+
     setThinking(false);
     setExpression(expressionFromName(a.expression));
-    Serial.printf("Steve (%s): %s\n", a.expression, a.reply);
-    Serial.printf("  scene: %s  temp: %.1f\n", a.scene, a.tempC);
-    startTalking(a.reply);
-  }
 
-  // the talking sequence: wait for mini Steve, show the text, then come back big
-  if (talkState == TALK_WAIT_MINI && faceIsMini())
-  {
-    replyShow(pendingReply);
-    talkState = TALK_SHOWING;
-  }
-  else if (talkState == TALK_SHOWING && !replyActive())
-  {
-    replyHide();
-    setFaceMode(FACE_FULL);
-    // hold his reaction a bit longer now he's back to full size
+    // an empty headline (an older server) just means no text, the face still answers
+    if (a.headline[0] != '\0')
+    {
+      headlineShow(a.headline);
+    }
+
     moodSetAt = millis();
     holdingMood = true;
-    talkState = TALK_IDLE;
+
+    Serial.printf("Steve (%s): %s\n", a.expression, a.reply);
+    Serial.printf("  headline: %s  scene: %s  temp: %.1f\n", a.headline, a.scene, a.tempC);
   }
 
   // relax back to neutral once, after the hold runs out
@@ -189,12 +157,4 @@ void loop()
     setExpression(NEUTRAL);
     holdingMood = false;
   }
-}
-
-// copies the text somewhere that lasts, then waits for mini Steve before showing it
-static void startTalking(const char *text)
-{
-  snprintf(pendingReply, sizeof(pendingReply), "%s", text);
-  setFaceMode(FACE_MINI);
-  talkState = TALK_WAIT_MINI;
 }

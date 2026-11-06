@@ -6,6 +6,7 @@ struct Answer
 {
     char reply[256];
     char expression[16];
+    char headline[40];
     char scene[16]; // "none" when there's nothing to draw
     float tempC;    // NAN when there was no weather lookup
     float highC;

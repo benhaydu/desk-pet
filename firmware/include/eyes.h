@@ -43,7 +43,7 @@ const Expression SAD        = {0, 35, 0};
 const Expression SLEEPY     = {15, 15, 0};
 const Expression HAPPY      = {0, 0, 35};
 const Expression SUSPICIOUS = {35, 35, 35};
-const Expression SQUINT = {38, 22, 32};
+const Expression THINKING = {0, 0, 0};
 
 Expression expressionFromName(const char* name);
 

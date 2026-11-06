@@ -158,13 +158,13 @@ void loop()
   if (askVersion() != seenVersion)
   {
     seenVersion = askVersion();
-    char reply[256];
-    char expr[16];
-    askLatest(reply, sizeof(reply), expr, sizeof(expr));
+    Answer a;
+    askLatest(a);
     setThinking(false);
-    setExpression(expressionFromName(expr));
-    Serial.printf("Steve (%s): %s\n", expr, reply);
-    startTalking(reply);
+    setExpression(expressionFromName(a.expression));
+    Serial.printf("Steve (%s): %s\n", a.expression, a.reply);
+    Serial.printf("  scene: %s  temp: %.1f\n", a.scene, a.tempC);
+    startTalking(a.reply);
   }
 
   // the talking sequence: wait for mini Steve, show the text, then come back big

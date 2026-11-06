@@ -14,14 +14,14 @@ struct Question
 static QueueHandle_t askQueue;
 
 // latest answer, shared between the ask task (core 0) and loop (core 1)
-static char lastReply[256];
-static char lastExpression[16];
+static Answer lastAnswer;
 static unsigned long answerVersion = 0;
 static SemaphoreHandle_t answerLock;
 
 static void askTask(void *param);
 static void sendQuestion(const char *text);
-static void storeAnswer(const char *reply, const char *expr);
+static void storeAnswer(const Answer &a);
+static void storeFallback(const char *reply, const char *expr);
 
 void askStart()
 {
@@ -47,13 +47,11 @@ unsigned long askVersion()
     return v;
 }
 
-void askLatest(char *reply, size_t replySize, char *expr, size_t exprSize)
+void askLatest(Answer &out)
 {
-    // copy into the caller's buffers while we hold the lock,
-    // so the task can't overwrite them halfway through
+    // copy while holding the lock so the task can't overwrite it halfway through
     xSemaphoreTake(answerLock, portMAX_DELAY);
-    snprintf(reply, replySize, "%s", lastReply);
-    snprintf(expr, exprSize, "%s", lastExpression);
+    out = lastAnswer;
     xSemaphoreGive(answerLock);
 }
 
@@ -72,13 +70,23 @@ static void askTask(void *param)
 }
 
 // the only place that writes the shared answer
-static void storeAnswer(const char *reply, const char *expr)
+static void storeAnswer(const Answer &a)
 {
     xSemaphoreTake(answerLock, portMAX_DELAY);
-    snprintf(lastReply, sizeof(lastReply), "%s", reply);
-    snprintf(lastExpression, sizeof(lastExpression), "%s", expr);
+    lastAnswer = a;
     answerVersion++;
     xSemaphoreGive(answerLock);
+}
+
+// for the error cases: a canned line, no scene, no weather
+static void storeFallback(const char *reply, const char *expr)
+{
+    Answer a;
+    snprintf(a.reply, sizeof(a.reply), "%s", reply);
+    snprintf(a.expression, sizeof(a.expression), "%s", expr);
+    snprintf(a.scene, sizeof(a.scene), "none");
+    a.tempC = a.highC = a.lowC = NAN;
+    storeAnswer(a);
 }
 
 static void sendQuestion(const char *text)
@@ -86,7 +94,7 @@ static void sendQuestion(const char *text)
     if (!isOnline())
     {
         Serial.println("offline, can't ask");
-        storeAnswer("I'm offline right now.", "sad");
+        storeFallback("I'm offline right now.", "sad");
         return;
     }
 
@@ -112,16 +120,16 @@ static void sendQuestion(const char *text)
     {
         Serial.println("ask rejected: STEVE_KEY doesn't match the server");
         http.end();
-        storeAnswer("My key doesn't fit the door.", "suspicious");
+        storeFallback("My key doesn't fit the door.", "suspicious");
         return;
     }
 
     if (status != 200)
     {
-       // negative = never got a response (Render down, no Wi-Fi, timed out)
+        // negative = never got a response (Render down, no Wi-Fi, timed out)
         Serial.printf("ask failed, status %d after %lu ms\n", status, postTime);
         http.end();
-        storeAnswer("I can't reach my brain right now.", "sad");
+        storeFallback("I can't reach my brain right now.", "sad");
         return;
     }
 
@@ -134,19 +142,24 @@ static void sendQuestion(const char *text)
     if (err)
     {
         Serial.printf("ask reply parse failed: %s\n", err.c_str());
-        storeAnswer("Hmm, my thoughts got scrambled. Try again?", "suspicious");
+        storeFallback("Hmm, my thoughts got scrambled. Try again?", "suspicious");
         return;
     }
 
     if (!doc["reply"].is<const char *>() || !doc["expression"].is<const char *>())
     {
         Serial.println("ask reply missing fields");
-        storeAnswer("Hmm, my thoughts got scrambled. Try again?", "suspicious");
+        storeFallback("Hmm, my thoughts got scrambled. Try again?", "suspicious");
         return;
     }
 
-    // these point into doc, which is fine because storeAnswer copies them right away
-    const char *reply = doc["reply"];
-    const char *expression = doc["expression"];
-    storeAnswer(reply, expression);
+    Answer a;
+    snprintf(a.reply, sizeof(a.reply), "%s", (const char *)doc["reply"]);
+    snprintf(a.expression, sizeof(a.expression), "%s", (const char *)doc["expression"]);
+    // scene and data are optional, so fall back if the server didn't send them
+    snprintf(a.scene, sizeof(a.scene), "%s", doc["scene"] | "none");
+    a.tempC = doc["data"]["temp_c"] | NAN;
+    a.highC = doc["data"]["high_c"] | NAN;
+    a.lowC = doc["data"]["low_c"] | NAN;
+    storeAnswer(a);
 }

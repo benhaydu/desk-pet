@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 import anthropic
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Header
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from weather import get_weather
 
@@ -37,9 +37,13 @@ question, give a clear, correct answer in plain words, the way a friendly tutor 
 explain it in one breath. Add a quick "why" or a simple example only if it fits.
 When it's just chat, be warm and a little playful. Happy is your normal mood.
 
-Keep every reply short: one to three sentences, under 200 characters.
-If a question really needs a long answer, give the core idea and say it's worth
-looking up properly on his computer. Never include links or URLs.
+Every answer has two parts:
+- headline: the only text Ben sees on your screen, so it has to make sense on its
+  own. A few words, at most 30 characters, no full sentence, no ending period.
+  Examples: "Umbrella tomorrow", "10C and cloudy", "Locks for shared data", "Hey Ben!"
+- reply: the full answer, one to three sentences, under 200 characters. If a question
+  really needs a long answer, give the core idea and say it's worth looking up
+  properly on his computer. Never include links or URLs.
 
 The current local time is {time}.
 Late at night (10 PM to 7 AM) you're sleepy: even shorter answers, and you might
@@ -47,10 +51,12 @@ gently suggest he get some rest.
 
 Your screen can only show basic text:
 - Plain text only. No code, markdown, emoji, lists or special symbols.
-- Use straight quotes and plain hyphens.
+- Use straight quotes and plain hyphens. Write temperatures like 10C, not with a
+  degree sign.
 
-You can check live weather with your tool; you don't have river or news data yet. If asked, say you're still
-learning that trick. If you're not sure about something, say so. Never make up facts.
+You can check live weather with your tool; you don't have river or news data yet.
+If asked about those, say you're still learning that trick. If you're not sure about
+something, say so. Never make up facts.
 
 Choose your expression based on how YOU feel about your reply:
 - happy: your default. Greetings, good questions, good news.
@@ -100,6 +106,7 @@ TOOLS = [
 ]
 
 MAX_TOOL_ROUNDS = 3
+HEADLINE_MAX = 30
 
 # has to match the presets in the firmware exactly
 Expression = Literal["neutral", "happy", "sad", "angry", "sleepy", "suspicious"]
@@ -114,6 +121,7 @@ class SteveResponse(BaseModel):
     reply: str
     expression: Expression
     scene: Scene
+    headline: str
     data: dict = {}
 
 class AskRequest(BaseModel):
@@ -122,6 +130,7 @@ class AskRequest(BaseModel):
 
 class AskResponse(BaseModel):
     reply: str
+    headline: str = Field(description="What Ben sees on screen: a few words, at most 30 characters")
     expression: Expression
 
 def pick_scene(weather) -> str:
@@ -145,6 +154,17 @@ def clean_for_screen(s: str) -> str:
     # removing a URL can leave double spaces behind
     s = re.sub(r"\s+", " ", s).strip()
     return s
+
+def fit_headline(s):
+    if len(s) <= HEADLINE_MAX:
+        return s
+    last_space = s.rfind(" ", 0, HEADLINE_MAX)
+    if last_space == -1:
+        return s[0:HEADLINE_MAX]
+    
+    return s[0: last_space]
+
+
 
 
 def ask_llm(text: str) -> SteveResponse:
@@ -206,11 +226,14 @@ def ask_llm(text: str) -> SteveResponse:
             "low_c": weather["today"]["low_c"],
         }
 
+    
+
     # Claude wrote the reply and picked the mood, the scene comes from the data
     return SteveResponse(
         reply=clean_for_screen(result.reply),
         expression=result.expression,
         scene=pick_scene(weather),
+        headline=fit_headline(clean_for_screen(result.headline)),
         data=data,
     )
 

@@ -8,8 +8,9 @@
 #include "ask.h"
 #include "headline.h"
 #include "scene.h"
+#include "touch.h"
 
-//#define DEBUG_TIMING   // uncomment to print frame timing once a second
+// #define DEBUG_TIMING   // uncomment to print frame timing once a second
 
 const int FRAME_INTERVAL_MS = 33;
 const int MOOD_HOLD_MS = 8000; // a bit longer than the longest headline (7 s)
@@ -25,6 +26,7 @@ static Rect combine(Rect a, Rect b);
 void setup()
 {
   Serial.begin(115200);
+  touchInit();
   pinMode(PET_PIN_BUTTON, INPUT_PULLUP);
 
   tft.init();
@@ -78,7 +80,7 @@ void loop()
     }
 
     frame.fillRect(r.x, r.y, r.w, r.h, TFT_BLACK);
-    drawSceneBack();  // behind Steve
+    drawSceneBack(); // behind Steve
     drawFace();
     drawSceneFront(); // in front of Steve
 
@@ -110,6 +112,16 @@ void loop()
   }
 
   updateNetwork();
+  updateTouch();
+
+    updateNetwork();
+  updateTouch();
+
+  // temporary: check each tap prints exactly once
+  if (touchTakePress())
+  {
+    Serial.println("tap");
+  }
 
   // typed lines: /commands for testing, anything else goes to Steve
   char question[128];

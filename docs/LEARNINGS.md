@@ -99,4 +99,152 @@ Notes on what I learned in each phase of the desk pet build. The point is to be 
 
 ## Phase 3: Connectivity
 
-_(to do)_
+### Wi-Fi and time
+
+- **Wi-Fi as a state machine.** Connecting runs in steps checked every pass through `loop()`, not a blocking `do`/`while`, so the eyes keep moving while it connects or retries.
+- **Keep my own state instead of trusting `WiFi.status()` everywhere.** Reading the status in several places raced with the library changing it. `isOnline()` now returns my state machine's state, and only the network module talks to the Wi-Fi library.
+- **`network.h` collided with the ESP32 core's `Network.h`.** Windows filenames aren't case-sensitive, so `#include "network.h"` found the core's file instead of mine. Renamed it to `net.h`.
+- **Time zones.** NTP gives UTC. `configTzTime` sets the zone when Wi-Fi connects, but before that the clock showed UTC, so I also call `setenv("TZ", ...)` and `tzset()` at boot. The chip's RTC keeps the time across a reset, so the clock is right straight away after a restart.
+
+### HTTP and JSON
+
+- **HTTPS with `WiFiClientSecure` and `setInsecure()`.** The connection is encrypted, but the board doesn't check who it's talking to. Fine on my home network for now; the proper fix is giving it the server's root certificate with `setCACert`.
+- **ArduinoJson v7.** `JsonDocument`, `deserializeJson`, then `.is<T>()` to check a field's type before trusting it. `doc["x"] | fallback` gives a default when a field is missing, which is how the board copes with older server versions.
+- **Pointers into a `JsonDocument` die with it.** `const char *reply = doc["reply"]` points into the document's memory, so it has to be copied (with `snprintf`) before the document goes out of scope.
+- **`%d` with a float is undefined behaviour.** The format string has to match the type exactly; `%.1f` for floats.
+
+### Two cores and FreeRTOS
+
+- **Networking in its own task.** `xTaskCreatePinnedToCore` runs the weather fetch on core 0 while `loop()` and the eyes run on core 1. A slow request can no longer freeze the face. Inside a task, `vTaskDelay(pdMS_TO_TICKS(ms))` sleeps without blocking anything else.
+- **A mutex protects data both cores touch.** Take it, copy the values into locals, give it back, then work with the copies. Holding the lock only for the copy keeps the other core waiting as little as possible.
+- **Bugs I hit with the weather task:**
+  - The mutex was never created, so the first `xSemaphoreTake` used a null handle.
+  - `weatherValid()` called itself while holding the lock, which is a deadlock: the task waits forever for a lock it already holds.
+  - A getter returned the shared global instead of the copy.
+  - `weatherVersion++` was inside a getter, so reading the value changed it.
+  - The retry delays were in seconds where the function wanted milliseconds, so they were 1000 times too short.
+  - The timeout comparison was backwards.
+- **A version counter tells `loop()` something changed.** The task bumps it with each new reading, and `loop()` only redraws when the number differs from the last one it saw. That's cheaper and simpler than a flag that someone has to remember to reset.
+
+### Performance, looking back
+
+- **The frame rate was really 16 fps, not 30.** `lastFrameTime = millis()` was set at the *end* of the frame, so drawing time was added to every interval. Setting it at the start fixed it.
+- **80 MHz SPI showed artifacts on this panel.** Pushing was faster, but the picture glitched, so it stays at 40 MHz. Faster isn't worth it if it looks broken.
+
+### Design
+
+- **I built a status strip (time and temperature) and then removed it.** Always-on information took screen space from the face and wasn't something I looked at. Time and weather are better on demand.
+
+---
+
+## Phase 4: The brain
+
+### Architecture
+
+- **The board never holds the Anthropic API key.** It sends the question to my own server, which calls Claude and replies with a small JSON object. Keeping the brain on the server means prompts and tools change without reflashing the board, and that part is in Python.
+- **FastAPI and Pydantic.** A request or response is a Pydantic model, so FastAPI validates the JSON coming in and builds it going out. `Literal["happy", "sad", ...]` restricts a field to the exact expression names the firmware knows.
+- **The server setup:** a `venv` for the Python packages, `requirements.txt` listing them, and the API key in `.env` (gitignored) loaded with `python-dotenv`. `.env.example` with fake values is committed so the repo explains what's needed.
+
+### Structured output from Claude
+
+- **`client.messages.parse(output_format=AskResponse)`** makes Claude return JSON that matches my Pydantic model, so I never parse free text.
+- **`parsed_output` can be `None`.** The model's thinking counts toward `max_tokens`, and at a low limit it ran out before writing the answer. I raised the limit to 2000 and added a `None` check that logs `stop_reason` and returns a 502 instead of crashing with a 500.
+- **The board's font is plain ASCII.** `clean_for_screen` swaps curly quotes, dashes and ellipses for ASCII *first*, then drops anything else (emoji, accents), then strips URLs and collapses spaces. The order matters: drop first and the quotes vanish instead of being swapped.
+
+### Getting the board to reach the server
+
+- **Windows Firewall blocked the board and my phone.** The PC could reach its own server, nothing else could. It needed `--host 0.0.0.0` (listen on the network, not just localhost), the network profile set to Private, and a firewall rule for the port, which has to be created from an admin PowerShell.
+
+### The board side
+
+- **A queue passes questions to the ask task, a mutex guards the answer.** `xQueueSend(..., 0)` never waits, so `loop()` can't block; if the queue is full, Steve's busy. The task sleeps in `xQueueReceive` until a question arrives, posts it, and writes the answer under the lock with a version bump.
+- **ArduinoJson builds the request body** so a question containing quotes gets escaped properly.
+- **`secrets.h` caused a "multiple definition" link error** once a second file included it. `const char *` makes the characters const but not the pointer, so the variable itself was defined twice. `const char* const` makes it a true constant, one per file.
+- **Typing in the serial monitor.** `readLine` builds the line one character at a time without blocking. Backspace arrives as a real character (`'\b'` or 127), so it has to remove the last character, or commands like `/mini` never match with `strcmp`.
+
+### C strings, properly this time
+
+- **Arrays can't be assigned with `=`.** Copy a string with `snprintf(dest, sizeof(dest), "%s", src)`, which also never overflows.
+- **`strcmp(a, b) == 0`** means equal. `==` on two `char*` compares addresses.
+- **`%.*s` prints part of a string:** `printf("%.*s", len, text + start)`. `text + start` is pointer arithmetic, "the string starting `start` characters in".
+- **Structs *can* be copied with `=`,** arrays inside them included. That's what made the `Answer` struct easy to pass around later.
+
+### Mini Steve and the talking sequence
+
+- **Switching faces during a blink hides the swap.** `setFaceMode` only records the request; the actual change happens when the eyes are fully closed, and then the whole screen is cleared once (`needsFullRedraw`) to remove the old face.
+- **`faceIsMini()` checks `!switchPending` too.** Otherwise text could start drawing just as a switch back to the big face was about to happen.
+- **A talking state machine** waited for mini Steve, showed the text, then brought him back. It worked, but reading scrolling text off a 2.8" screen turned out to be the wrong idea (see Phase 5).
+
+### Deploying to Render
+
+- **Lock the door before opening it.** The server requires an `X-Steve-Key` header before it's public, or anyone who finds the URL could spend my Anthropic credits.
+  - `secrets.compare_digest` instead of `==`, so a rejection takes the same time however much of the key was right.
+  - `Header(default="")` means a missing header reaches my check and gets the same **401** as a wrong key. Without the default, FastAPI rejects it first with a 422, and "missing" and "wrong" look different from outside.
+  - A **guard clause** rejects bad requests at the top, so the normal path isn't nested inside an `if`.
+  - An empty `STEVE_KEY` would let a request with no header match `""`, so the server refuses to start without a real key.
+  - A wrong key that fell off the end of the function returned `None`, which became a 500. Every path needs an explicit return or raise.
+- **Environment variables instead of `.env` in production.** Render has no `.env` file, so `load_dotenv()` does nothing there and `os.environ` reads the dashboard's variables. Same code, different config. The start command uses `$PORT`, because Render picks the port.
+- **Render's free tier sleeps after 15 minutes**, and waking takes 30 to 60 seconds. The board's timeout is 60 seconds, so the first question after a quiet stretch sometimes fails with status -11 (`HTTPC_ERROR_READ_TIMEOUT`). I decided a clear "Brain offline" is better than waiting longer.
+- **Scrambled serial output** came from two tasks printing at the same moment. `Serial.printf` isn't locked, so their characters interleave. Harmless, just confusing.
+- **Git habits.** Run `git status` on its own and read it before `git add`, and keep server and firmware changes in separate commits. Pasting all the commands at once runs the check after it's too late to matter. Also, "ahead of origin/main by 1 commit" means Render can't see it yet.
+
+---
+
+## Phase 5: Glanceable replies
+
+### What Steve is for
+
+- **A chatbot on a 2.8" screen is the wrong product.** My phone and PC are always on the desk and better at long answers. Steve's strengths are being always visible, having a face, and showing things without being asked. So answers became a face plus a few big words, and general questions became a minor feature.
+
+### Headlines
+
+- **Claude returns a `headline` (30 characters at most) next to the full reply.** The screen only shows the headline.
+- **Limits go in the description, not `Field(max_length=30)`.** If structured output can't guarantee a length limit and Claude goes one character over, parsing fails and the whole answer is lost. The description guides Claude, and `fit_headline` enforces it on the server, cutting at the last space before the limit.
+- **Clean first, then fit.** Cleaning can make text longer (an ellipsis becomes three dots), so fitting first could still end up over the limit.
+- **Slices exclude their end,** like `range`: `s[:30]` is 30 characters, and `s[0, 30]` with a comma is a tuple index and a `TypeError`.
+- **The degree sign isn't in the board's font,** so the prompt says to write `10C`. Claude copies the style of the examples it's given, so the examples have to be screen-safe too.
+- **A FastAPI endpoint's return type filters the response.** I left the endpoint typed as the old model and the new fields were silently dropped: no error anywhere, the board just never got them.
+
+### Drawing the headline (`headline.cpp`)
+
+- **Auto-fit:** try FreeSansBold 18pt, then 12pt, then 9pt, and use the biggest one whose `textWidth()` fits the strip. Measure with the real font rather than counting characters, because "W" is much wider than "i".
+- **`MC_DATUM`** makes `drawString`'s `x, y` the centre of the text, so centring works whatever font got picked.
+- **Push after clearing, even when nothing is drawn.** Hiding a headline means pushing a black strip, otherwise the old text stays on the screen.
+- **A `dirty` flag** means the strip is only redrawn and pushed when it changes, not every frame.
+- **`font` was already taken.** TFT_eSPI pulls in a global array called `font`, and my variable with the same name caused four errors. Only the first one was the real problem; the rest followed from it. Renamed mine to `chosenFont`.
+- **A parameter can hide a global.** A parameter called `text` hid my `static char text[40]`, so `snprintf` tried to write into a read-only `const char *`, and `sizeof(text)` was the size of a pointer (4), not 40.
+- **Prototypes have to match definitions exactly.** When `storeAnswer` and `storeFallback` changed parameters but their prototypes didn't, C++ treated them as different functions with the same name (overloading). The calls compiled, then the linker couldn't find the old version.
+- **The `Answer` struct** replaced passing four buffers and four sizes around. `askLatest(Answer &out)` takes a **reference**: the caller's own variable, used like a normal variable, never null.
+
+### The thinking face
+
+- **Lid shapes always read as an emotion.** Inner lids down read as angry, an even droop as tired, and a raised bottom lid as happy, even a small one. My first thinking faces kept looking like one of those.
+- **Motion carries state better than shape.** Other projects (FluxGarage RoboEyes, Anki's Vector) show states like confused or curious mostly through movement. I mocked up five options before building one, and picked short eyes sweeping side to side.
+- **One `thinkAmount` from 0 to 1 drives both effects.** It eases in and out over a quarter of a second, and both the eye height and the gaze blend by it, so he slides into thinking instead of snapping. Each fade starts from the current value, so flipping it halfway through carries on smoothly.
+- **An early `return` in `updateGaze`** lets thinking take over the gaze without touching the normal glance state machine.
+
+---
+
+## Phase 6 so far: the weather tool
+
+### Tool use
+
+- **Claude can't fetch anything itself.** I describe a `get_weather` tool (a name, a description, and a JSON schema for its input). When a question needs it, Claude replies with `stop_reason == "tool_use"` and the input it wants. My server runs the function and sends the result back, and Claude answers from real data.
+- **The descriptions decide when the tool gets used.** "Even if the word 'weather' isn't used" is what makes "do I need an umbrella?" trigger it, and the location's description sets Victoria as the default.
+- **The loop:** a `messages` list that grows; Claude's turn appended exactly as it came; one `tool_result` per `tool_use`, tagged with its id, `json.dumps`'d, and marked `is_error` on failure. A cap on rounds stops a confused model from looping forever, and `parsed_output` is `None` on tool rounds, so the check moved after the loop.
+- **Every `tool_use` needs a result,** even for a tool the server doesn't know, or the next call fails.
+- **Claude does language, code does facts.** Claude writes the reply and picks the mood, and the server picks the scene from the weather data with a plain dictionary. That's why there are two response models: `AskResponse` (what Claude fills in) and `SteveResponse` (what the board gets).
+
+### The weather module
+
+- **"What's the day like" isn't the daily weather code.** Open-Meteo's daily code is the *worst* weather at any point, so a sunny day with a 15-minute shower came back as rain. I count the hourly conditions between 5 am and midnight, grouped into categories, and the most common one wins. The rainy hours go to Claude separately, so he can still mention the shower.
+- **`data["x"]` vs `data.get("x")`.** Square brackets raise a `KeyError` when a required field is missing, so the error gets caught. `.get()` quietly returns `None`, and the `KeyError` in my `except` could never happen.
+- **Bugs that compiled and ran:**
+  - `...` left in as a placeholder is a real Python value (`Ellipsis`), which only failed later at `json.dumps`.
+  - `hour <= WAKING_START < WAKING_END` is a chained comparison: it means `hour <= 5 and 5 < 24`, so it checked the wrong thing entirely.
+  - `code <- 77` is read as `code < -77`, which no code ever is, so snow never matched.
+  - Comparing against `datetime.now()` used the *server's* clock, and Render runs on UTC. The location's own date from the API is the right one.
+  - Python has no block scope: a `for` loop variable called `code` was the same variable as the `code` above it, so the function returned the last hour's weather instead of the day's.
+- **Open-Meteo returned 429 on Render.** Free cloud servers share outgoing IP addresses, and Open-Meteo limits by IP, so other people's traffic used up my limit. I switched to WeatherAPI.com, where the limit belongs to my own key. Because the weather logic lives in its own module, nothing else on the server had to change.
+- **Read secrets when they're used, not at import.** `main.py` imports `weather.py` *before* calling `load_dotenv()`, so a key read at the top of the file would always be empty.
+- **Don't log errors that contain secrets.** WeatherAPI takes the key in the URL, and httpx's error messages include the URL, so printing the exception would have put my key in Render's logs.

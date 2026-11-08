@@ -27,32 +27,38 @@ struct Expression
 
 struct Rect
 {
-    int x, y, w, h;
+  int x, y, w, h;
 };
 
 enum FaceMode
 {
-    FACE_FULL,
-    FACE_MINI
+  FACE_FULL,
+  FACE_MINI
 };
 
-
-const Expression NEUTRAL    = {0, 0, 0};
-const Expression ANGRY      = {35, 0, 0};
-const Expression SAD        = {0, 35, 0};
-const Expression SLEEPY     = {15, 15, 0};
-const Expression HAPPY      = {0, 0, 35};
+const Expression NEUTRAL = {0, 0, 0};
+const Expression ANGRY = {35, 0, 0};
+const Expression SAD = {0, 35, 0};
+const Expression SLEEPY = {15, 15, 0};
+const Expression HAPPY = {0, 0, 35};
 const Expression SUSPICIOUS = {35, 35, 35};
-const Expression THINKING = {0, 0, 0};
+const Expression THINKING = {0, 0, 0}; // the look comes from the scanning motion, not the lids
 
-Expression expressionFromName(const char* name);
+Expression expressionFromName(const char *name);
 
 void eyesInit();                     // call once in setup()
 void updateEyes();                   // once per frame, before drawing
 void setExpression(Expression next); // morphs from the current face to this one
-void setThinking(bool on); 
+void setThinking(bool on);
 void drawFace();
 void setFaceMode(FaceMode mode);
 Rect faceRegion();
-bool faceTakeFullRedraw();   // true once after a mode switch, then false
-bool faceIsMini(); // true once mini Steve is really showing, not just requested
+bool faceTakeFullRedraw(); // true once after a mode switch, then false
+bool faceIsMini();         // true once mini Steve is really showing, not just requested
+
+// hooks for scenes
+void setFaceScale(float scale, int offsetY); // eases to a new size, 1.0 and 0 = normal
+void setFaceNudge(int dx, int dy);           // instant shift, for shakes and startles
+void setFaceStretch(float s);                // instant height multiplier, 1.0 = normal
+void setGazeTarget(float x, float y);        // eyes follow this spot until cleared
+void clearGazeTarget();                      // back to his own glances

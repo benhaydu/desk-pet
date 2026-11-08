@@ -17,13 +17,15 @@ static const int GLANCE_MS = 180;
 static const int MIN_GLANCE = 25;
 
 // thinking: short eyes sweeping side to side, like he's scanning for the answer
-static const int SCAN_RANGE_X = 40;          // how far left and right the sweep goes
-static const int SCAN_Y = -12;               // a little above centre
-static const float SCAN_SPEED = 2.2f;        // radians per second, one sweep about every 3 s
+static const int SCAN_RANGE_X = 40;   // how far left and right the sweep goes
+static const int SCAN_Y = -12;        // a little above centre
+static const float SCAN_SPEED = 2.2f; // radians per second, one sweep about every 3 s
 static const float THINK_HEIGHT_SCALE = 0.5f;
 static const unsigned long THINK_FADE_MS = 250;
 
-static const int EXPR_MS = 250; // how long a morph takes
+static const int EXPR_MS = 250;                 // how long a morph takes
+static const unsigned long SCALE_FADE_MS = 300; // how long a resize takes
+static const float GAZE_FOLLOW_S = 0.12f;       // how quickly the eyes catch up to a scene's target
 
 static const int MINI_CX = 292;
 static const int MINI_CY = 20;
@@ -62,6 +64,11 @@ static unsigned long moveStart = 0;
 static unsigned long holdStart = 0;
 static unsigned long holdDelay = 0;
 
+// a scene can take over the gaze, the eyes ease toward its target
+static bool gazeOverride = false;
+static float overrideX = 0, overrideY = 0;
+static unsigned long lastOverrideUpdate = 0;
+
 // expression
 static Expression currentExpr = NEUTRAL;
 static Expression fromExpr = NEUTRAL;
@@ -74,6 +81,16 @@ static float thinkAmount = 0; // 0 = normal, 1 = fully thinking
 static float fadeFrom = 0;    // where thinkAmount started its current fade
 static unsigned long fadeStart = 0;
 static unsigned long thinkStart = 0;
+
+// face size, for scenes that need him smaller (the umbrella)
+static float faceScale = 1.0f, faceOffsetY = 0;
+static float scaleFrom = 1.0f, scaleTo = 1.0f;
+static float offsetFrom = 0, offsetTo = 0;
+static unsigned long scaleStart = 0;
+
+// instant tweaks a scene sets every frame (the storm's startle and shake)
+static int nudgeX = 0, nudgeY = 0;
+static float faceStretch = 1.0f;
 
 struct NamedExpression
 {
@@ -101,12 +118,13 @@ static bool needsFullRedraw = false;
 
 static void updateBlink();
 static void updateThinkAmount();
+static void updateFaceScale();
 static void updateGaze();
 static void updateExpression();
 static void drawEye(int cx, int cy,        // where the eye's centre is (offset already added)
                     int width, int height, // this frame's size (height already includes the blink)
                     int radius,
-                    float lidScale, // 1.0 for big Steve, MINI_SCALE for mini
+                    float lidScale, // 1.0 for big Steve, smaller when the face is shrunk
                     bool isLeftEye);
 static float easeInOut(float t);
 static int lerpInt(int a, int b, float t);
@@ -180,18 +198,25 @@ void updateEyes()
   updateBlink();
   updateExpression();
   updateThinkAmount(); // before the gaze, which uses it
+  updateFaceScale();
   updateGaze();
 }
 
 static void drawEyes()
 {
   // thinking squashes the eyes down, on top of whatever the blink is doing
-  int h = eyeHeight * (1.0f - thinkAmount * (1.0f - THINK_HEIGHT_SCALE));
+  float thinkSquash = 1.0f - thinkAmount * (1.0f - THINK_HEIGHT_SCALE);
 
-  drawEye(CENTER_X - EYE_SPACING + lookX, CENTER_Y + lookY,
-          EYE_WIDTH, h, EYE_RADIUS, 1.0f, true);
-  drawEye(CENTER_X + EYE_SPACING + lookX, CENTER_Y + lookY,
-          EYE_WIDTH, h, EYE_RADIUS, 1.0f, false);
+  // a scene can shrink the whole face, so size, spacing, gaze and lids all scale together
+  int w = EYE_WIDTH * faceScale;
+  int h = eyeHeight * thinkSquash * faceScale * faceStretch;
+  int spacing = EYE_SPACING * faceScale;
+  int radius = EYE_RADIUS * faceScale;
+  int cx = CENTER_X + lookX * faceScale + nudgeX;
+  int cy = CENTER_Y + faceOffsetY + lookY * faceScale + nudgeY;
+
+  drawEye(cx - spacing, cy, w, h, radius, faceScale, true);
+  drawEye(cx + spacing, cy, w, h, radius, faceScale, false);
 }
 
 static void drawMiniEyes()
@@ -241,6 +266,55 @@ void setThinking(bool on)
     moveStart = millis();
     gazeState = MOVING;
   }
+}
+
+void setFaceScale(float scale, int offsetY)
+{
+  // start from wherever he is right now, even mid-resize
+  scaleFrom = faceScale;
+  offsetFrom = faceOffsetY;
+  scaleTo = scale;
+  offsetTo = offsetY;
+  scaleStart = millis();
+}
+
+void setFaceNudge(int dx, int dy)
+{
+  nudgeX = dx;
+  nudgeY = dy;
+}
+
+void setFaceStretch(float s)
+{
+  faceStretch = s;
+}
+
+void setGazeTarget(float x, float y)
+{
+  if (!gazeOverride)
+  {
+    gazeOverride = true;
+    lastOverrideUpdate = millis();
+  }
+  // keep the target inside the range the region can show
+  overrideX = constrain(x, -LOOK_RANGE_X, LOOK_RANGE_X);
+  overrideY = constrain(y, -LOOK_RANGE_Y, LOOK_RANGE_Y);
+}
+
+void clearGazeTarget()
+{
+  if (!gazeOverride)
+  {
+    return; // safe to call every frame
+  }
+  gazeOverride = false;
+  // glide back to centre, then the normal glances take over
+  fromX = lookX;
+  fromY = lookY;
+  toX = 0;
+  toY = 0;
+  moveStart = millis();
+  gazeState = MOVING;
 }
 
 Expression expressionFromName(const char *name)
@@ -324,6 +398,18 @@ static void updateThinkAmount()
   thinkAmount = fadeFrom + (target - fadeFrom) * easeInOut(t);
 }
 
+static void updateFaceScale()
+{
+  float t = (millis() - scaleStart) / (float)SCALE_FADE_MS;
+  if (t > 1)
+  {
+    t = 1;
+  }
+  float e = easeInOut(t);
+  faceScale = scaleFrom + (scaleTo - scaleFrom) * e;
+  faceOffsetY = offsetFrom + (offsetTo - offsetFrom) * e;
+}
+
 static void updateGaze()
 {
   if (thinking)
@@ -333,6 +419,22 @@ static void updateGaze()
     // blend from where he was looking into the sweep while thinkAmount fades in
     lookX = fromX + (scanX - fromX) * thinkAmount;
     lookY = fromY + (SCAN_Y - fromY) * thinkAmount;
+    return;
+  }
+
+  if (gazeOverride)
+  {
+    // close a fixed fraction of the gap per second, so a moving target is followed smoothly
+    unsigned long now = millis();
+    float dt = (now - lastOverrideUpdate) / 1000.0f;
+    lastOverrideUpdate = now;
+    if (dt > 0.1f)
+    {
+      dt = 0.1f; // after a long pause don't jump the whole way in one frame
+    }
+    float k = 1.0f - expf(-dt / GAZE_FOLLOW_S);
+    lookX += (overrideX - lookX) * k;
+    lookY += (overrideY - lookY) * k;
     return;
   }
 
@@ -399,7 +501,7 @@ static void updateExpression()
 static void drawEye(int cx, int cy,        // where the eye's centre is (offset already added)
                     int width, int height, // this frame's size (height already includes the blink)
                     int radius,
-                    float lidScale, // 1.0 for big Steve, MINI_SCALE for mini
+                    float lidScale, // 1.0 for big Steve, smaller when the face is shrunk
                     bool isLeftEye)
 {
   int left_edge_x = cx - width / 2;

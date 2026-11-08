@@ -7,17 +7,20 @@
 #include "console.h"
 #include "ask.h"
 #include "headline.h"
+#include "scene.h"
 
-// #define DEBUG_TIMING   // uncomment to print frame timing once a second
+//#define DEBUG_TIMING   // uncomment to print frame timing once a second
 
 const int FRAME_INTERVAL_MS = 33;
 const int MOOD_HOLD_MS = 8000; // a bit longer than the longest headline (7 s)
 
-// not static, eyes.cpp and headline.cpp use this through extern
+// not static, eyes.cpp, headline.cpp and scene.cpp use this through extern
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
 
 unsigned long lastFrameTime = 0;
+
+static Rect combine(Rect a, Rect b);
 
 void setup()
 {
@@ -52,8 +55,21 @@ void loop()
 #endif
 
     updateEyes();
+    updateScene();
 
+    // the face's box, grown to cover the scene while one is showing
     Rect r = faceRegion();
+    if (sceneActive())
+    {
+      r = combine(r, sceneRegion());
+    }
+
+    // a scene that just ended still has its last frame on screen, wipe it once
+    Rect leftover;
+    if (sceneTakeClear(leftover))
+    {
+      r = combine(r, leftover);
+    }
 
     // right after a mode switch the old face is still on screen, so wipe everything once
     if (faceTakeFullRedraw())
@@ -62,13 +78,15 @@ void loop()
     }
 
     frame.fillRect(r.x, r.y, r.w, r.h, TFT_BLACK);
+    drawSceneBack();  // behind Steve
     drawFace();
+    drawSceneFront(); // in front of Steve
 
 #ifdef DEBUG_TIMING
     unsigned long drawDone = micros();
 #endif
 
-    // only push the part of the screen the face is using
+    // only push the part of the screen that's in use
     frame.pushSprite(r.x, r.y, r.x, r.y, r.w, r.h);
 
 #ifdef DEBUG_TIMING
@@ -107,11 +125,17 @@ void loop()
     }
     else if (strcmp(question, "/head") == 0)
     {
-      headlineShow("Hey Ben!"); // short, should get the biggest font
+      headlineShow("Hey Ben!");
     }
     else if (strcmp(question, "/headlong") == 0)
     {
-      headlineShow("Locks stop two threads at once"); // 30 chars, should drop a size or two
+      headlineShow("Locks stop two threads at once");
+    }
+    else if (question[0] == '/')
+    {
+      // anything else starting with / is a scene test: /rain, /sun, /storm...
+      // question + 1 skips the slash, an unknown name just hides the scene
+      sceneShow(question + 1);
     }
     else if (!askSubmit(question))
     {
@@ -121,13 +145,14 @@ void loop()
     {
       // a new question clears the old answer and any reaction still being held
       headlineHide();
+      sceneHide();
       holdingMood = false;
       setExpression(THINKING);
       setThinking(true);
     }
   }
 
-  // a new answer arrived: react with the face, label it with the headline
+  // a new answer arrived: react with the face, show the scene, label it with the headline
   static unsigned long seenVersion = 0;
   if (askVersion() != seenVersion)
   {
@@ -137,6 +162,7 @@ void loop()
 
     setThinking(false);
     setExpression(expressionFromName(a.expression));
+    sceneShow(a.scene);
 
     // an empty headline (an older server) just means no text, the face still answers
     if (a.headline[0] != '\0')
@@ -157,4 +183,14 @@ void loop()
     setExpression(NEUTRAL);
     holdingMood = false;
   }
+}
+
+// the smallest box that covers both a and b
+static Rect combine(Rect a, Rect b)
+{
+  int left = min(a.x, b.x);
+  int top = min(a.y, b.y);
+  int right = max(a.x + a.w, b.x + b.w);
+  int bottom = max(a.y + a.h, b.y + b.h);
+  return {left, top, right - left, bottom - top};
 }

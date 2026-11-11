@@ -132,13 +132,14 @@ class AskResponse(BaseModel):
     reply: str
     headline: str = Field(description="What Ben sees on screen: a few words, at most 30 characters")
     expression: Expression
+    weather_day: Literal["today", "tomorrow"] = Field(
+        description="Which day Ben's question is about. 'today' if it isn't about the weather."
+    )
 
-def pick_scene(weather) -> str:
-    # no weather lookup, or weather we have no scene for, means no scene
+def pick_scene(weather, day: str) -> str:
     if not weather:
         return "none"
-    return SCENE_FOR.get(weather["today"]["main_conditions"], "none")
-
+    return SCENE_FOR.get(weather[day]["main_conditions"], "none")
 
 def clean_for_screen(s: str) -> str:
     # links are useless on the screen and would break the word wrapping
@@ -163,8 +164,6 @@ def fit_headline(s):
         return s[0:HEADLINE_MAX]
     
     return s[0: last_space]
-
-
 
 
 def ask_llm(text: str) -> SteveResponse:
@@ -217,14 +216,17 @@ def ask_llm(text: str) -> SteveResponse:
         print("no structured output, stop_reason:", response.stop_reason)
         raise RuntimeError("model didn't return a usable answer")
 
-    # only the numbers a scene might draw, empty when there was no weather lookup
+
+    day = result.weather_day
     data = {}
     if weather:
         data = {
-            "temp_c": weather["now"]["temp_c"],
-            "high_c": weather["today"]["high_c"],
-            "low_c": weather["today"]["low_c"],
+            "high_c": weather[day]["high_c"],
+            "low_c": weather[day]["low_c"],
         }
+        # "right now" only means something for today
+        if day == "today":
+            data["temp_c"] = weather["now"]["temp_c"]
 
     
 
@@ -232,7 +234,7 @@ def ask_llm(text: str) -> SteveResponse:
     return SteveResponse(
         reply=clean_for_screen(result.reply),
         expression=result.expression,
-        scene=pick_scene(weather),
+        scene=pick_scene(weather, day),
         headline=fit_headline(clean_for_screen(result.headline)),
         data=data,
     )

@@ -1,4 +1,3 @@
-import re
 import os
 import secrets
 import json
@@ -12,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, Field
 
 from weather import get_weather
+from screen import clean_for_screen, fit_headline, pick_scene
 
 # pull the API keys out of .env before anything needs them
 load_dotenv()
@@ -67,16 +67,7 @@ Choose your expression based on how YOU feel about your reply:
 - angry: rarely, only as playful mock-offence. Never actually hostile.
 """
 
-# characters the board's font can't draw, swapped for plain ASCII ones
-SCREEN_REPLACEMENTS = {
-    "\u201c": '"',    # left double quote
-    "\u201d": '"',    # right double quote
-    "\u2018": "'",    # left single quote
-    "\u2019": "'",    # right single quote / apostrophe
-    "\u2014": "-",    # em dash
-    "\u2013": "-",    # en dash
-    "\u2026": "...",  # ellipsis
-}
+
 
 # what Claude can ask the server to run, the descriptions are how it decides when
 TOOLS = [
@@ -106,14 +97,11 @@ TOOLS = [
 ]
 
 MAX_TOOL_ROUNDS = 3
-HEADLINE_MAX = 30
+
 
 # has to match the presets in the firmware exactly
 Expression = Literal["neutral", "happy", "sad", "angry", "sleepy", "suspicious"]
 
-SCENE_FOR = {"clear": "sun", "cloudy": "cloud", 
-             "rain": "rain", "snow": "snow", 
-             "storm": "storm", "fog": "fog",}
 
 Scene = Literal["none", "sun", "cloud", "rain", "snow", "fog", "storm"]
 
@@ -136,34 +124,7 @@ class AskResponse(BaseModel):
         description="Which day Ben's question is about. 'today' if it isn't about the weather."
     )
 
-def pick_scene(weather, day: str) -> str:
-    if not weather:
-        return "none"
-    return SCENE_FOR.get(weather[day]["main_conditions"], "none")
 
-def clean_for_screen(s: str) -> str:
-    # links are useless on the screen and would break the word wrapping
-    s = re.sub(r"https?://\S+|www\.\S+", "", s)
-
-    # fix fancy punctuation first, so it gets swapped rather than deleted below
-    for char, replacement in SCREEN_REPLACEMENTS.items():
-        s = s.replace(char, replacement)
-
-    # anything else outside plain ASCII (emoji, accents) gets dropped
-    s = "".join(c for c in s if ord(c) < 128)
-
-    # removing a URL can leave double spaces behind
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
-
-def fit_headline(s):
-    if len(s) <= HEADLINE_MAX:
-        return s
-    last_space = s.rfind(" ", 0, HEADLINE_MAX)
-    if last_space == -1:
-        return s[0:HEADLINE_MAX]
-    
-    return s[0: last_space]
 
 
 def ask_llm(text: str) -> SteveResponse:

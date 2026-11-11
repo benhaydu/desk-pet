@@ -114,7 +114,7 @@ void loop()
   updateNetwork();
   updateTouch();
 
-    updateNetwork();
+  updateNetwork();
   updateTouch();
 
   // temporary: check each tap prints exactly once
@@ -130,6 +130,17 @@ void loop()
     if (strcmp(question, "/mini") == 0)
     {
       setFaceMode(FACE_MINI);
+    }
+    else if (strcmp(question, "/time") == 0)
+    {
+      // the board's own clock, to compare with the server's
+      struct tm now;
+      if (getLocalTime(&now))
+      {
+        char buf[32];
+        strftime(buf, sizeof(buf), "%a %I:%M %p", &now);
+        Serial.println(buf);
+      }
     }
     else if (strcmp(question, "/full") == 0)
     {

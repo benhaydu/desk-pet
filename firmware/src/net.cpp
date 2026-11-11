@@ -16,11 +16,11 @@ static const int TIMEOUT_MS = 15000;
 static const int RETRY_MS = 5000;
 static unsigned long start_connect = 0;
 static unsigned long retry_timer = 0;
-static const char* const TZ_STRING = "PST8PDT,M3.2.0,M11.1.0";
+static const char *TIMEZONE = "MST7";
 
 void networkInit()
 {
-    setenv("TZ", TZ_STRING, 1);
+    setenv("TZ", TIMEZONE, 1);
     tzset();
     retry_timer = millis() - RETRY_MS;
     WiFi.mode(WIFI_STA);
@@ -51,7 +51,7 @@ void updateNetwork()
         {
             Serial.print("Connected IP: ");
             Serial.println(WiFi.localIP());
-            configTzTime(TZ_STRING, "pool.ntp.org");
+            configTzTime(TIMEZONE, "pool.ntp.org");
             netstate = NET_CONNECTED;
         }
         else if (millis() - start_connect >= TIMEOUT_MS)

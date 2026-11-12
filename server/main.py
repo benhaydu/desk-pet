@@ -11,7 +11,8 @@ from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel, Field
 
 from weather import get_weather
-from screen import clean_for_screen, fit_headline, pick_scene
+from briefing import BriefingResponse, build_briefing
+from screen import Expression, Scene, clean_for_screen, fit_text, pick_scene
 
 # pull the API keys out of .env before anything needs them
 load_dotenv()
@@ -210,4 +211,15 @@ def ask(req: AskRequest, x_steve_key: str = Header(default="")) -> SteveResponse
         return ask_llm(req.text)
     except (anthropic.APIError, RuntimeError) as e:
         print("LLM call failed:", e)
+        raise HTTPException(status_code=502, detail="Steve's brain is unavailable")
+
+@app.get("/briefing")
+def get_briefing(x_steve_key: str = Header(default="")) -> BriefingResponse:
+    if not secrets.compare_digest(x_steve_key, steve_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        return build_briefing(client, MODEL)
+    except (anthropic.APIError, RuntimeError) as e:
+        print("briefing failed:", e)
         raise HTTPException(status_code=502, detail="Steve's brain is unavailable")

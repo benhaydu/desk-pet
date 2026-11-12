@@ -5,21 +5,36 @@
 
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
+from urllib.parse import urlparse
 import xml.etree.ElementTree as ET
 
 import httpx
 
+# each category tries its feeds in order and uses the first one with recent headlines,
+# so one dead or quiet feed doesn't cost the briefing a card. They all have to be RSS 2.0
+# (<rss><channel><item>): Atom feeds use <feed><entry> and would quietly come back empty
 FEEDS = {
-    "canada": "https://www.cbc.ca/webfeed/rss/rss-canada",
-    "tech": "https://www.cbc.ca/webfeed/rss/rss-technology",
-    "world": "https://www.cbc.ca/webfeed/rss/rss-world",
-    "leafs": "https://news.google.com/rss/search?q=%22Toronto+Maple+Leafs%22&hl=en-CA&gl=CA&ceid=CA:en",
-    "saints": "https://news.google.com/rss/search?q=%22New+Orleans+Saints%22&hl=en-CA&gl=CA&ceid=CA:en",
+    "canada": ["https://www.cbc.ca/webfeed/rss/rss-canada"],
+    "tech": [
+        "https://feeds.arstechnica.com/arstechnica/index",
+        "https://techcrunch.com/feed/",
+        "https://www.cbc.ca/webfeed/rss/rss-technology",
+    ],
+    "world": ["https://www.cbc.ca/webfeed/rss/rss-world"],
+    "leafs": ["https://news.google.com/rss/search?q=%22Toronto+Maple+Leafs%22&hl=en-CA&gl=CA&ceid=CA:en"],
+    "saints": ["https://news.google.com/rss/search?q=%22New+Orleans+Saints%22&hl=en-CA&gl=CA&ceid=CA:en"],
 }
 
 MAX_ITEMS = 5
 MAX_AGE = timedelta(hours=36)
 DEFAULT_SOURCE = "CBC"  # CBC items have no <source>, Google News items do
+
+# what to call a feed that has no <source>, by its web address
+SOURCE_FOR_HOST = {
+    "www.cbc.ca": "CBC",
+    "feeds.arstechnica.com": "Ars Technica",
+    "techcrunch.com": "TechCrunch",
+}
 
 
 def _parse_date(raw):
@@ -61,7 +76,7 @@ def _get_feed(url: str) -> list:
         if not title or published is None or now - published > MAX_AGE:
             continue
 
-        source = item.findtext("source") or DEFAULT_SOURCE
+        source = item.findtext("source") or SOURCE_FOR_HOST.get(urlparse(url).netloc, DEFAULT_SOURCE)
         items.append({
             "title": _clean_title(title.strip(), source),
             "source": source,
@@ -75,8 +90,17 @@ def _get_feed(url: str) -> list:
     return items
 
 
+def _first_with_news(urls: list) -> list:
+    # the backups are only fetched when the feed before them came back empty
+    for url in urls:
+        items = _get_feed(url)
+        if items:
+            return items
+    return []
+
+
 def get_news() -> dict:
-    return {name: _get_feed(url) for name, url in FEEDS.items()}
+    return {name: _first_with_news(urls) for name, urls in FEEDS.items()}
 
 
 if __name__ == "__main__":

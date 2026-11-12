@@ -1,25 +1,38 @@
 import re
+from typing import Literal
 
+# has to match the presets in the firmware exactly
+Expression = Literal["neutral", "happy", "sad", "angry", "sleepy", "suspicious"]
+
+# has to match the scene names in the firmware's scene table
+Scene = Literal["none", "sun", "cloud", "rain", "snow", "fog", "storm"]
+
+# the day's main conditions (from weather.py) to the scene the board draws
+SCENE_FOR = {
+    "clear": "sun",
+    "cloudy": "cloud",
+    "rain": "rain",
+    "snow": "snow",
+    "storm": "storm",
+    "fog": "fog",
+}
 
 # characters the board's font can't draw, swapped for plain ASCII ones
 SCREEN_REPLACEMENTS = {
-    "\u201c": '"',    # left double quote
-    "\u201d": '"',    # right double quote
-    "\u2018": "'",    # left single quote
-    "\u2019": "'",    # right single quote / apostrophe
-    "\u2014": "-",    # em dash
-    "\u2013": "-",    # en dash
-    "\u2026": "...",  # ellipsis
+    "“": '"',    # left double quote
+    "”": '"',    # right double quote
+    "‘": "'",    # left single quote
+    "’": "'",    # right single quote / apostrophe
+    "—": "-",    # em dash
+    "–": "-",    # en dash
+    "…": "...",  # ellipsis
 }
-
-SCENE_FOR = {"clear": "sun", "cloudy": "cloud", 
-             "rain": "rain", "snow": "snow", 
-             "storm": "storm", "fog": "fog",}
-
 
 HEADLINE_MAX = 30
 
+
 def pick_scene(weather, day: str) -> str:
+    # no weather lookup, or weather we have no scene for, means no scene
     if not weather:
         return "none"
     return SCENE_FOR.get(weather[day]["main_conditions"], "none")
@@ -40,12 +53,13 @@ def clean_for_screen(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
-def fit_headline(s: str, limit: int = HEADLINE_MAX) -> str:
-    if len(s) <= HEADLINE_MAX:
-        return s
-    last_space = s.rfind(" ", 0, HEADLINE_MAX)
-    if last_space == -1:
-        return s[0:HEADLINE_MAX]
-    
-    return s[0: last_space]
 
+def fit_text(s: str, limit: int = HEADLINE_MAX) -> str:
+    # Claude is asked to stay under the limit, this makes sure of it
+    if len(s) <= limit:
+        return s
+    last_space = s.rfind(" ", 0, limit)
+    if last_space == -1:
+        return s[:limit]  # one long word, nothing better to do than cut it
+    # cut at a space so no word gets chopped, and don't leave a dangling comma or dash
+    return s[:last_space].rstrip(" ,;:-")

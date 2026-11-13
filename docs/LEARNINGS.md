@@ -248,3 +248,27 @@ Notes on what I learned in each phase of the desk pet build. The point is to be 
 - **Open-Meteo returned 429 on Render.** Free cloud servers share outgoing IP addresses, and Open-Meteo limits by IP, so other people's traffic used up my limit. I switched to WeatherAPI.com, where the limit belongs to my own key. Because the weather logic lives in its own module, nothing else on the server had to change.
 - **Read secrets when they're used, not at import.** `main.py` imports `weather.py` *before* calling `load_dotenv()`, so a key read at the top of the file would always be empty.
 - **Don't log errors that contain secrets.** WeatherAPI takes the key in the URL, and httpx's error messages include the URL, so printing the exception would have put my key in Render's logs.
+
+### The morning briefing (server)
+
+- **The server decides the structure, Claude writes the words.** `_skeleton` builds every card in a fixed order with the facts for each, and Claude only fills in titles and lines. The worst a bad run can do is an awkward line, never a missing or shuffled briefing.
+- **Only give Claude the facts you want it to use.** The weather card got today and tomorrow, and Claude wrote about tomorrow's rain under a cloudy scene for today. Sending only `today` fixed it; a prompt rule would only have asked nicely.
+- **Feeds can be wrong without failing.** CBC's tech feed came back with moose and mice stories. The fallback chain only catches empty feeds, so the fix was putting a source that's always about tech first. Reading the output is the only way to catch that kind of bug.
+- **`max_tokens` has to cover the thinking, and thinking varies run to run.** 3000 fit locally and ran out on Render with the same model. I raised it to 6000 and log `usage.output_tokens` on every run, before the `None` check so failures log too.
+- **`ThreadPoolExecutor` runs the three sources at once,** and `.result()` waits for each and hands back its value.
+
+### The morning briefing (board)
+
+- **One network task, two kinds of request.** The queue item got an `enum class RequestKind`, so the task can fetch a briefing or ask a question but only ever holds one TLS connection (about 40 KB) at a time.
+- **Every request ends in exactly one version bump,** even a failed one (stored with `count = 0`), so whoever is waiting always finds out.
+- **`Card &card = b.cards[b.count]`** fills the array slot through a reference. Without the `&` it fills a copy that gets thrown away. A skipped card doesn't bump `count`, so the next card just overwrites the slot.
+- **`sizeof(card.lines[0])`, not `sizeof(card.lines)`.** In a 2D array the second is the whole block, and `snprintf` would think it could write three lines' worth into one.
+- **`String(SERVER_URL) + "/ask"`** because adding two `const char *` would be adding two addresses, which doesn't compile.
+- **`__has_include` and a gitignored header** let my own team images show on my board while the public repo builds without them and falls back to drawn icons. `static_assert` checks the image size matches the slot at compile time.
+- **A table of function pointers** maps each card id to its colour and icon function, so a new topic is one line.
+- **Easing makes motion feel intentional.** Panels slide in with ease-out (fast, then settling) and out with ease-in (slow, then gone), and in is a bit slower than out because the eye needs to land on new content.
+- **A viewport clips the slide** so text passing under mini Steve's corner can't draw over him.
+- **Drawing an image one pixel at a time** avoids `pushImage`'s byte-swap setting (wrong colours if you get it wrong) and makes black transparent for free. 1,600 pixels per frame, only during a slide, costs nothing noticeable.
+- **The player acts on taps and stops at safe points.** `skipping` and `stopping` are flags the `Hold` step reads, never actions taken immediately, so a tap during a slide or a blink can't cut it in half.
+- **A function defined in a header has to be `inline`** (and `constexpr` implies it), or every file that includes it defines it again and the linker refuses.
+- **Windows blocked `pip.exe`** with an Application Control policy because the launcher isn't signed. `python -m pip` runs the same code inside the signed `python.exe`.

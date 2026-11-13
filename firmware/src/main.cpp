@@ -3,7 +3,6 @@
 #include "net.h"
 #include "pins.h"
 #include "eyes.h"
-#include "weather.h"
 #include "console.h"
 #include "ask.h"
 #include "headline.h"
@@ -11,13 +10,16 @@
 #include "touch.h"
 #include "panel.h"
 #include "player.h"
+#include "reading.h"
+#include "morning.h"
+#include "sleep.h"
 
 // #define DEBUG_TIMING   // uncomment to print frame timing once a second
 
 const int FRAME_INTERVAL_MS = 33;
 const int MOOD_HOLD_MS = 8000; // a bit longer than the longest headline (7 s)
 
-// not static, eyes.cpp, headline.cpp, scene.cpp and panel.cpp use this through extern
+// not static, the drawing modules (eyes, headline, scene, panel, reading, sleep) use it through extern
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
 
@@ -38,10 +40,10 @@ void setup()
     Serial.println("Sprite allocation failed: not enough memory");
   }
   tft.fillScreen(TFT_BLACK);
+  sleepInit(); // after tft.init(), which switches the backlight on
 
   eyesInit();
   networkInit();
-  weatherStart();
   askStart();
 }
 
@@ -49,8 +51,11 @@ void loop()
 {
   static unsigned long moodSetAt = 0;
   static bool holdingMood = false;
+  static bool asking = false;      // a question is out, waiting for the answer
+  static bool briefWanted = false; // /brief: play the next briefing that arrives
 
-  if (millis() - lastFrameTime >= FRAME_INTERVAL_MS)
+  // nothing to draw while the screen is dark, so the chip gets to rest too
+  if (!sleepScreenDark() && millis() - lastFrameTime >= FRAME_INTERVAL_MS)
   {
     lastFrameTime = millis();
 
@@ -60,6 +65,7 @@ void loop()
 
     updateEyes();
     updateScene();
+    updateReading();
 
     // the face's box, grown to cover the scene while one is showing
     Rect r = faceRegion();
@@ -68,9 +74,20 @@ void loop()
       r = combine(r, sceneRegion());
     }
 
-    // a scene that just ended still has its last frame on screen, wipe it once
+    // and the newspaper, where it is now and where it was last frame
+    Rect paper = readingRegion();
+    if (readingActive() && paper.w > 0)
+    {
+      r = combine(r, paper);
+    }
+
+    // a scene or paper that just went away still has its last frame on screen, wipe it once
     Rect leftover;
     if (sceneTakeClear(leftover))
+    {
+      r = combine(r, leftover);
+    }
+    if (readingTakeClear(leftover))
     {
       r = combine(r, leftover);
     }
@@ -84,6 +101,8 @@ void loop()
     frame.fillRect(r.x, r.y, r.w, r.h, TFT_BLACK);
     drawSceneBack(); // behind Steve
     drawFace();
+    drawReading();    // the paper he's holding, in front of his eyes
+    drawSleep();      // closed eyes and z's at night, over everything else on his face
     drawSceneFront(); // in front of Steve
 
 #ifdef DEBUG_TIMING
@@ -119,14 +138,22 @@ void loop()
   updateTouch();
   updatePlayer();
 
-  // a tap skips to the next card during the briefing. The scheduler will use it next
-  if (touchTakePress())
+  // busy answering a question or playing something: the morning puts the paper down,
+  // and at night he wakes up for it
+  bool steveBusy = asking || holdingMood || headlineActive() || sceneActive() || playerActive();
+  updateMorning(steveBusy);
+  updateSleep(steveBusy);
+
+  // a tap: wakes him a little at night, skips a card during the briefing,
+  // or starts the briefing while he's reading the paper
+  // && stops at the first false, so sleepTap() only runs when there was a tap
+  if (touchTakePress() && !sleepTap())
   {
     if (playerActive())
     {
       playerSkip();
     }
-    else
+    else if (!morningTap())
     {
       Serial.println("tap");
     }
@@ -166,7 +193,11 @@ void loop()
     else if (strcmp(question, "/brief") == 0)
     {
       // test only: fetch a fresh briefing and play it when it arrives
-      if (!briefingRequest())
+      if (briefingRequest())
+      {
+        briefWanted = true;
+      }
+      else
       {
         Serial.println("Steve's busy, try again in a sec");
       }
@@ -186,6 +217,42 @@ void loop()
         playerStart(b);
       }
     }
+    else if (strcmp(question, "/read") == 0)
+    {
+      // test only: the reading look on its own, /read again puts the paper down
+      if (readingActive())
+      {
+        readingHide();
+      }
+      else
+      {
+        readingShow();
+      }
+    }
+    else if (strcmp(question, "/morning") == 0)
+    {
+      // test only: the whole weekday morning right now, fetch, paper, tap, briefing.
+      // It counts as today's, so the real one won't run again today
+      morningForce();
+    }
+    else if (strcmp(question, "/sleep") == 0)
+    {
+      // test only: act like it's night, /auto goes back to the clock
+      sleepForce(1);
+    }
+    else if (strcmp(question, "/wake") == 0)
+    {
+      // test only: act like it's daytime
+      sleepForce(0);
+    }
+    else if (strcmp(question, "/auto") == 0)
+    {
+      sleepForce(-1);
+    }
+    else if (strcmp(question, "/yawn") == 0)
+    {
+      sleepYawn();
+    }
     else if (question[0] == '/')
     {
       // anything else starting with / is a scene test: /rain, /sun, /storm...
@@ -203,6 +270,7 @@ void loop()
       headlineHide();
       sceneHide();
       holdingMood = false;
+      asking = true;
       setExpression(THINKING);
       setThinking(true);
     }
@@ -216,6 +284,7 @@ void loop()
     Answer a;
     askLatest(a);
 
+    asking = false;
     setThinking(false);
     setExpression(expressionFromName(a.expression));
     sceneShow(a.scene);
@@ -233,7 +302,8 @@ void loop()
     Serial.printf("  headline: %s  scene: %s  temp: %.1f\n", a.headline, a.scene, a.tempC);
   }
 
-  // a new briefing arrived: print it and play it. The scheduler will replace this part
+  // a new briefing arrived: always print it, but only play it here for /brief.
+  // The morning watches for its own fetches and plays them itself
   static unsigned long seenBriefing = 0;
   if (briefingVersion() != seenBriefing)
   {
@@ -256,8 +326,12 @@ void loop()
       }
     }
 
-    holdingMood = false;
-    playerStart(b); // does nothing if it's empty
+    if (briefWanted)
+    {
+      briefWanted = false;
+      holdingMood = false;
+      playerStart(b); // does nothing if it's empty
+    }
   }
 
   // relax back to neutral once, after the hold runs out. The briefing sets its own faces

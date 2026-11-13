@@ -170,7 +170,7 @@ static void sendQuestion(const char *text)
     http.begin(client, String(SERVER_URL) + "/ask");
     http.addHeader("Content-Type", "application/json");
     http.addHeader("X-Steve-Key", STEVE_KEY);
-    http.setTimeout(60000); // Render's free tier can take up to a minute to wake up
+    http.setTimeout(65000); // Render's free tier can take up to a minute to wake up
 
     unsigned long postStart = millis();
     int status = http.POST(body);
@@ -243,7 +243,7 @@ static void fetchBriefing()
     client.setInsecure();
     http.begin(client, String(SERVER_URL) + "/briefing");
     http.addHeader("X-Steve-Key", STEVE_KEY);
-    http.setTimeout(60000); // same wake-up allowance as /ask
+    http.setTimeout(120000); // fetched in the background before 9, so it can wait out a cold start
 
     unsigned long getStart = millis();
     int status = http.GET();

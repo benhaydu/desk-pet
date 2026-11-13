@@ -8,7 +8,7 @@ static const int MIN_EYE_HEIGHT = 6;
 static const int BLINK_SPEED = 20;
 static const int CLOSED_HOLD_MS = 40;
 static const int EYE_RADIUS = 18;
-static constexpr uint16_t EYE_COLOR = TFT_CYAN;
+static constexpr uint16_t EYE_COLOR = TFT_WHITE;
 static const int LID_PAD = 2; // lids overshoot the eye a bit to hide the anti-aliased edge
 
 static const int LOOK_RANGE_X = REGION_MARGIN_X; // can't look past the margin or it gets cut off
@@ -135,6 +135,11 @@ static Expression lerpExpr(Expression a, Expression b, float t);
 bool faceIsMini()
 {
   return faceMode == FACE_MINI && !switchPending;
+}
+
+bool faceIsFull()
+{
+  return faceMode == FACE_FULL && !switchPending;
 }
 
 void setFaceMode(FaceMode mode)

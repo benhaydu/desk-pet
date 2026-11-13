@@ -9,13 +9,15 @@
 #include "headline.h"
 #include "scene.h"
 #include "touch.h"
+#include "panel.h"
+#include "player.h"
 
 // #define DEBUG_TIMING   // uncomment to print frame timing once a second
 
 const int FRAME_INTERVAL_MS = 33;
 const int MOOD_HOLD_MS = 8000; // a bit longer than the longest headline (7 s)
 
-// not static, eyes.cpp, headline.cpp and scene.cpp use this through extern
+// not static, eyes.cpp, headline.cpp, scene.cpp and panel.cpp use this through extern
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
 
@@ -91,6 +93,12 @@ void loop()
     // only push the part of the screen that's in use
     frame.pushSprite(r.x, r.y, r.x, r.y, r.w, r.h);
 
+    // after the face push, so a full-screen clear can never wipe fresh text
+    updateHeadline();
+    drawHeadline();
+    updatePanel();
+    drawPanel();
+
 #ifdef DEBUG_TIMING
     unsigned long pushDone = micros();
 
@@ -105,19 +113,23 @@ void loop()
                     pushDone - frameStart);
     }
 #endif
-
-    // after the face push, so a full-screen clear can never wipe a fresh headline
-    updateHeadline();
-    drawHeadline();
   }
 
   updateNetwork();
   updateTouch();
+  updatePlayer();
 
-  // temporary: check each tap prints exactly once
+  // a tap skips to the next card during the briefing. The scheduler will use it next
   if (touchTakePress())
   {
-    Serial.println("tap");
+    if (playerActive())
+    {
+      playerSkip();
+    }
+    else
+    {
+      Serial.println("tap");
+    }
   }
 
   // typed lines: /commands for testing, anything else goes to Steve
@@ -153,10 +165,25 @@ void loop()
     }
     else if (strcmp(question, "/brief") == 0)
     {
-      // test only: fetch the briefing now, the scheduler will do this at 8:50 later
+      // test only: fetch a fresh briefing and play it when it arrives
       if (!briefingRequest())
       {
         Serial.println("Steve's busy, try again in a sec");
+      }
+    }
+    else if (strcmp(question, "/play") == 0)
+    {
+      // test only: replay the last briefing without asking the server again
+      Briefing b;
+      briefingLatest(b);
+      if (b.count == 0)
+      {
+        Serial.println("no briefing yet, try /brief first");
+      }
+      else
+      {
+        holdingMood = false;
+        playerStart(b);
       }
     }
     else if (question[0] == '/')
@@ -171,7 +198,8 @@ void loop()
     }
     else
     {
-      // a new question clears the old answer and any reaction still being held
+      // a new question wraps up the briefing and clears the old answer
+      playerStop();
       headlineHide();
       sceneHide();
       holdingMood = false;
@@ -205,7 +233,7 @@ void loop()
     Serial.printf("  headline: %s  scene: %s  temp: %.1f\n", a.headline, a.scene, a.tempC);
   }
 
-  // test only: print a new briefing. The player will replace this
+  // a new briefing arrived: print it and play it. The scheduler will replace this part
   static unsigned long seenBriefing = 0;
   if (briefingVersion() != seenBriefing)
   {
@@ -220,17 +248,20 @@ void loop()
     for (int i = 0; i < b.count; i++)
     {
       const Card &c = b.cards[i];
-      Serial.printf("card %d: %s  scene=%s  expr=%s  \"%s\"\n",
-                    i, c.panel ? "panel" : "face", c.scene, c.expression, c.title);
+      Serial.printf("card %d: %s %s  scene=%s  expr=%s  \"%s\"\n",
+                    i, c.id, c.panel ? "panel" : "face", c.scene, c.expression, c.title);
       for (int j = 0; j < c.lineCount; j++)
       {
         Serial.printf("    %s\n", c.lines[j]);
       }
     }
+
+    holdingMood = false;
+    playerStart(b); // does nothing if it's empty
   }
 
-  // relax back to neutral once, after the hold runs out
-  if (holdingMood && millis() - moodSetAt > MOOD_HOLD_MS)
+  // relax back to neutral once, after the hold runs out. The briefing sets its own faces
+  if (holdingMood && !playerActive() && millis() - moodSetAt > MOOD_HOLD_MS)
   {
     setExpression(NEUTRAL);
     holdingMood = false;

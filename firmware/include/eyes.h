@@ -55,6 +55,7 @@ void setFaceMode(FaceMode mode);
 Rect faceRegion();
 bool faceTakeFullRedraw(); // true once after a mode switch, then false
 bool faceIsMini();         // true once mini Steve is really showing, not just requested
+bool faceIsFull();         // true once the big face is really showing, not just requested
 
 // hooks for scenes
 void setFaceScale(float scale, int offsetY); // eases to a new size, 1.0 and 0 = normal

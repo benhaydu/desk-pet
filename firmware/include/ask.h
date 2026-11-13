@@ -19,6 +19,7 @@ constexpr int MAX_CARD_LINES = 3;
 
 struct Card
 {
+    char id[16];
     bool panel;          // false = face card (headline + scene), true = panel (title + lines)
     char scene[16];
     char expression[16];

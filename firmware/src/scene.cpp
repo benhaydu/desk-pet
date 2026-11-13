@@ -1,6 +1,7 @@
 #include <TFT_eSPI.h>
 #include "eyes.h"
 #include "scene.h"
+#include "colors.h"
 
 extern TFT_eSprite frame;
 
@@ -11,11 +12,6 @@ static const unsigned long SCENE_HOLD_MS = 7000;
 // staying inside the face's width keeps the push time reasonable
 static const Rect SCENE_AREA = {REGION_X, 0, REGION_W, REGION_Y + REGION_H};
 
-// colours as (r, g, b), worked out at compile time
-static constexpr uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b)
-{
-    return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-}
 
 static constexpr uint16_t RAIN_BLUE = rgb565(55, 138, 221);
 static constexpr uint16_t UMBRELLA_RED = rgb565(226, 75, 74);

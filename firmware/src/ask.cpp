@@ -304,6 +304,7 @@ static void fetchBriefing()
         // move and the next card just overwrites this slot
         Card &card = b.cards[b.count];
         card.panel = panel;
+        snprintf(card.id, sizeof(card.id), "%s", c["id"] | "");
         snprintf(card.scene, sizeof(card.scene), "%s", c["scene"] | "none");
         snprintf(card.expression, sizeof(card.expression), "%s", c["expression"] | "neutral");
         snprintf(card.title, sizeof(card.title), "%s", title);

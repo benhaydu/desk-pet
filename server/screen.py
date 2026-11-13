@@ -30,6 +30,8 @@ SCREEN_REPLACEMENTS = {
 
 HEADLINE_MAX = 30
 
+# words that can't end a line on their own, so a cut never leaves "...from a"
+DANGLING = {"a", "an", "the", "to", "of", "from", "and", "or", "in", "on", "at", "for", "with"}
 
 def pick_scene(weather, day: str) -> str:
     # no weather lookup, or weather we have no scene for, means no scene
@@ -53,7 +55,6 @@ def clean_for_screen(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
-
 def fit_text(s: str, limit: int = HEADLINE_MAX) -> str:
     # Claude is asked to stay under the limit, this makes sure of it
     if len(s) <= limit:
@@ -62,4 +63,9 @@ def fit_text(s: str, limit: int = HEADLINE_MAX) -> str:
     if last_space == -1:
         return s[:limit]  # one long word, nothing better to do than cut it
     # cut at a space so no word gets chopped, and don't leave a dangling comma or dash
-    return s[:last_space].rstrip(" ,;:-")
+    cut = s[:last_space].rstrip(" ,;:-")
+    # drop a dangling little word left at the end of the cut
+    words = cut.split(" ")
+    while len(words) > 1 and words[-1].lower() in DANGLING:
+        words.pop()
+    return " ".join(words).rstrip(" ,;:-")

@@ -72,6 +72,7 @@ class BriefingText(BaseModel):
 
 
 class BoardCard(BaseModel):
+    id: str # "leafs", "news_tech"... the board picks the panel's colour and icon from it
     kind: Literal["face", "panel"]
     scene: Scene
     expression: Expression
@@ -172,7 +173,7 @@ def _merge(cards: list[dict], text: BriefingText) -> list[BoardCard]:
             # a panel with no words would just be an empty box
             if card["id"] != "greeting":
                 continue
-            merged.append(BoardCard(kind="face", scene="none", expression="happy",
+            merged.append(BoardCard(id="greeting", kind="face", scene="none", expression="happy",
                                     title="Morning Ben!", lines=[]))
             continue
 
@@ -184,7 +185,7 @@ def _merge(cards: list[dict], text: BriefingText) -> list[BoardCard]:
             lines = [fit_text(clean_for_screen(line), LINE_MAX) for line in t.lines]
             lines = [line for line in lines if line][:MAX_LINES]  # no blanks, no extras
 
-        merged.append(BoardCard(kind=card["kind"], scene=card["scene"],
+        merged.append(BoardCard(id=card["id"], kind=card["kind"], scene=card["scene"],
                                 expression=t.expression, title=title, lines=lines))
     return merged
 

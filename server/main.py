@@ -47,17 +47,17 @@ Every answer has two parts:
   properly on his computer. Never include links or URLs.
 
 The current local time is {time}.
-Late at night (10 PM to 7 AM) you're sleepy: even shorter answers, and you might
-gently suggest he get some rest.
+Late at night (11 PM to 7:30 AM) Ben woke you up to ask: you're sleepy, so give even
+shorter answers, and you might gently suggest he get some rest.
 
 Your screen can only show basic text:
 - Plain text only. No code, markdown, emoji, lists or special symbols.
 - Use straight quotes and plain hyphens. Write temperatures like 10C, not with a
   degree sign.
 
-You can check live weather with your tool; you don't have river or news data yet.
-If asked about those, say you're still learning that trick. If you're not sure about
-something, say so. Never make up facts.
+You can check live weather with your tool. You don't have river data, or news outside
+the morning briefing, yet. If asked about those, say you're still learning that trick.
+If you're not sure about something, say so. Never make up facts.
 
 Choose your expression based on how YOU feel about your reply:
 - happy: your default. Greetings, good questions, good news.
@@ -67,8 +67,6 @@ Choose your expression based on how YOU feel about your reply:
 - suspicious: odd questions, trick questions, or claims that sound wrong.
 - angry: rarely, only as playful mock-offence. Never actually hostile.
 """
-
-
 
 # what Claude can ask the server to run, the descriptions are how it decides when
 TOOLS = [
@@ -100,18 +98,13 @@ TOOLS = [
 MAX_TOOL_ROUNDS = 3
 
 
-# has to match the presets in the firmware exactly
-Expression = Literal["neutral", "happy", "sad", "angry", "sleepy", "suspicious"]
-
-
-Scene = Literal["none", "sun", "cloud", "rain", "snow", "fog", "storm"]
-
 class SteveResponse(BaseModel):
     reply: str
     expression: Expression
     scene: Scene
     headline: str
     data: dict = {}
+
 
 class AskRequest(BaseModel):
     text: str
@@ -124,8 +117,6 @@ class AskResponse(BaseModel):
     weather_day: Literal["today", "tomorrow"] = Field(
         description="Which day Ben's question is about. 'today' if it isn't about the weather."
     )
-
-
 
 
 def ask_llm(text: str) -> SteveResponse:
@@ -178,7 +169,6 @@ def ask_llm(text: str) -> SteveResponse:
         print("no structured output, stop_reason:", response.stop_reason)
         raise RuntimeError("model didn't return a usable answer")
 
-
     day = result.weather_day
     data = {}
     if weather:
@@ -190,14 +180,12 @@ def ask_llm(text: str) -> SteveResponse:
         if day == "today":
             data["temp_c"] = weather["now"]["temp_c"]
 
-    
-
     # Claude wrote the reply and picked the mood, the scene comes from the data
     return SteveResponse(
         reply=clean_for_screen(result.reply),
         expression=result.expression,
         scene=pick_scene(weather, day),
-        headline=fit_headline(clean_for_screen(result.headline)),
+        headline=fit_text(clean_for_screen(result.headline)),
         data=data,
     )
 
@@ -206,12 +194,13 @@ def ask_llm(text: str) -> SteveResponse:
 def ask(req: AskRequest, x_steve_key: str = Header(default="")) -> SteveResponse:
     if not secrets.compare_digest(x_steve_key, steve_key):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    
+
     try:
         return ask_llm(req.text)
     except (anthropic.APIError, RuntimeError) as e:
         print("LLM call failed:", e)
         raise HTTPException(status_code=502, detail="Steve's brain is unavailable")
+
 
 @app.get("/briefing")
 def get_briefing(x_steve_key: str = Header(default="")) -> BriefingResponse:

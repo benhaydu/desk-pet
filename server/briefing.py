@@ -72,7 +72,7 @@ class BriefingText(BaseModel):
 
 
 class BoardCard(BaseModel):
-    id: str # "leafs", "news_tech"... the board picks the panel's colour and icon from it
+    id: str  # "leafs", "news_tech"... the board picks the panel's colour and icon from it
     kind: Literal["face", "panel"]
     scene: Scene
     expression: Expression

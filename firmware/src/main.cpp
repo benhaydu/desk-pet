@@ -114,9 +114,6 @@ void loop()
   updateNetwork();
   updateTouch();
 
-  updateNetwork();
-  updateTouch();
-
   // temporary: check each tap prints exactly once
   if (touchTakePress())
   {
@@ -131,17 +128,6 @@ void loop()
     {
       setFaceMode(FACE_MINI);
     }
-    else if (strcmp(question, "/time") == 0)
-    {
-      // the board's own clock, to compare with the server's
-      struct tm now;
-      if (getLocalTime(&now))
-      {
-        char buf[32];
-        strftime(buf, sizeof(buf), "%a %I:%M %p", &now);
-        Serial.println(buf);
-      }
-    }
     else if (strcmp(question, "/full") == 0)
     {
       setFaceMode(FACE_FULL);
@@ -153,6 +139,25 @@ void loop()
     else if (strcmp(question, "/headlong") == 0)
     {
       headlineShow("Locks stop two threads at once");
+    }
+    else if (strcmp(question, "/time") == 0)
+    {
+      // the board's own clock, to compare with the server's
+      struct tm now;
+      if (getLocalTime(&now))
+      {
+        char buf[32];
+        strftime(buf, sizeof(buf), "%a %I:%M %p", &now);
+        Serial.println(buf);
+      }
+    }
+    else if (strcmp(question, "/brief") == 0)
+    {
+      // test only: fetch the briefing now, the scheduler will do this at 8:50 later
+      if (!briefingRequest())
+      {
+        Serial.println("Steve's busy, try again in a sec");
+      }
     }
     else if (question[0] == '/')
     {
@@ -198,6 +203,30 @@ void loop()
 
     Serial.printf("Steve (%s): %s\n", a.expression, a.reply);
     Serial.printf("  headline: %s  scene: %s  temp: %.1f\n", a.headline, a.scene, a.tempC);
+  }
+
+  // test only: print a new briefing. The player will replace this
+  static unsigned long seenBriefing = 0;
+  if (briefingVersion() != seenBriefing)
+  {
+    seenBriefing = briefingVersion();
+    Briefing b;
+    briefingLatest(b);
+
+    if (b.count == 0)
+    {
+      Serial.println("briefing came back empty, see the error above");
+    }
+    for (int i = 0; i < b.count; i++)
+    {
+      const Card &c = b.cards[i];
+      Serial.printf("card %d: %s  scene=%s  expr=%s  \"%s\"\n",
+                    i, c.panel ? "panel" : "face", c.scene, c.expression, c.title);
+      for (int j = 0; j < c.lineCount; j++)
+      {
+        Serial.printf("    %s\n", c.lines[j]);
+      }
+    }
   }
 
   // relax back to neutral once, after the hold runs out

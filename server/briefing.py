@@ -28,6 +28,10 @@ PANEL_TITLE_MAX = 20
 LINE_MAX = 24
 MAX_LINES = 3
 
+# Haiku's thinking varies a lot between runs, so leave plenty of room.
+# 3000 fit locally and then ran out on Render with the same model
+MAX_TOKENS = 6000
+
 SYSTEM_PROMPT = """You are Steve, a small robot on Ben's desk in Victoria, BC. It's {time},
 and this is Ben's weekday morning briefing. He reads it at a glance from across the desk,
 a few seconds per card, so every word has to earn its place.
@@ -141,11 +145,14 @@ def _write_cards(client, model: str, cards: list[dict]) -> BriefingText:
     now = datetime.now(TIMEZONE).strftime("%A %B %d, %I:%M %p")
     response = client.messages.parse(
         model=model,
-        max_tokens=3000,  # seven cards plus thinking, so more room than /ask
+        max_tokens=MAX_TOKENS,
         system=SYSTEM_PROMPT.format(time=now),
         messages=[{"role": "user", "content": json.dumps(cards)}],
         output_format=BriefingText,
     )
+    # before the None check, so the failed runs log their usage too
+    print(f"briefing used {response.usage.output_tokens} of {MAX_TOKENS} output tokens")
+
     result = response.parsed_output
     if result is None:
         print("briefing: no structured output, stop_reason:", response.stop_reason)

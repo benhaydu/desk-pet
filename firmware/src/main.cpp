@@ -5,6 +5,7 @@
 #include "eyes.h"
 #include "console.h"
 #include "ask.h"
+#include "clocktime.h"
 #include "headline.h"
 #include "scene.h"
 #include "touch.h"
@@ -18,6 +19,7 @@
 
 const int FRAME_INTERVAL_MS = 33;
 const int MOOD_HOLD_MS = 8000; // a bit longer than the longest headline (7 s)
+const unsigned long MIN_THINK_MS = 1200; // a fast answer still gets a moment of thinking first
 
 // not static, the drawing modules (eyes, headline, scene, panel, reading, sleep) use it through extern
 TFT_eSPI tft = TFT_eSPI();
@@ -51,8 +53,11 @@ void loop()
 {
   static unsigned long moodSetAt = 0;
   static bool holdingMood = false;
-  static bool asking = false;      // a question is out, waiting for the answer
+  static bool asking = false;      // a question is out, until its answer is on screen
   static bool briefWanted = false; // /brief: play the next briefing that arrives
+  static bool wantThinking = false;  // start thinking as soon as his face is free
+  static bool answerWaiting = false; // an answer arrived, show it once he's thought for a moment
+  static unsigned long thinkingSince = 0;
 
   // nothing to draw while the screen is dark, so the chip gets to rest too
   if (!sleepScreenDark() && millis() - lastFrameTime >= FRAME_INTERVAL_MS)
@@ -100,9 +105,12 @@ void loop()
 
     frame.fillRect(r.x, r.y, r.w, r.h, TFT_BLACK);
     drawSceneBack(); // behind Steve
-    drawFace();
+    if (!sleepCoversFace())
+    {
+      drawFace(); // no point drawing open eyes that the closed ones would hide
+    }
     drawReading();    // the paper he's holding, in front of his eyes
-    drawSleep();      // closed eyes and z's at night, over everything else on his face
+    drawSleep();      // closed eyes and z's at night
     drawSceneFront(); // in front of Steve
 
 #ifdef DEBUG_TIMING
@@ -144,6 +152,15 @@ void loop()
   updateMorning(steveBusy);
   updateSleep(steveBusy);
 
+  // at night his face is busy waking up first, so the thinking waits for it
+  if (wantThinking && sleepFaceFree())
+  {
+    wantThinking = false;
+    setExpression(THINKING);
+    setThinking(true);
+    thinkingSince = millis();
+  }
+
   // a tap: wakes him a little at night, skips a card during the briefing,
   // or starts the briefing while he's reading the paper
   // && stops at the first false, so sleepTap() only runs when there was a tap
@@ -183,11 +200,15 @@ void loop()
     {
       // the board's own clock, to compare with the server's
       struct tm now;
-      if (getLocalTime(&now))
+      if (localNow(now))
       {
         char buf[32];
         strftime(buf, sizeof(buf), "%a %I:%M %p", &now);
         Serial.println(buf);
+      }
+      else
+      {
+        Serial.println("clock not set yet");
       }
     }
     else if (strcmp(question, "/brief") == 0)
@@ -271,16 +292,25 @@ void loop()
       sceneHide();
       holdingMood = false;
       asking = true;
-      setExpression(THINKING);
-      setThinking(true);
+      answerWaiting = false;
+      wantThinking = true; // the face reacts below, once it's free
     }
   }
 
-  // a new answer arrived: react with the face, show the scene, label it with the headline
+  // a new answer arrived: note it, it's shown below once he's ready
   static unsigned long seenVersion = 0;
   if (askVersion() != seenVersion)
   {
     seenVersion = askVersion();
+    answerWaiting = true;
+  }
+
+  // react with the face, show the scene, label it with the headline. Only once he's been
+  // thinking for a moment, so a fast answer (or one that arrives while he's still waking up)
+  // doesn't flash past
+  if (answerWaiting && !wantThinking && millis() - thinkingSince >= MIN_THINK_MS)
+  {
+    answerWaiting = false;
     Answer a;
     askLatest(a);
 
@@ -339,6 +369,13 @@ void loop()
   {
     setExpression(NEUTRAL);
     holdingMood = false;
+  }
+
+  // dark screen, nothing to animate: let the chip idle between passes instead of spinning.
+  // 10 ms is still twice as often as the touch pad is read, so taps aren't missed
+  if (sleepScreenDark())
+  {
+    delay(10);
   }
 }
 

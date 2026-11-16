@@ -1,9 +1,8 @@
 #include <Arduino.h>
 #include <TFT_eSPI.h>
-#include <time.h>
+#include "clocktime.h"
 #include "colors.h"
 #include "eyes.h"
-#include "net.h"
 #include "sleep.h"
 
 extern TFT_eSprite frame;
@@ -23,14 +22,29 @@ static const uint32_t PWM_HZ = 5000;
 static const uint8_t PWM_BITS = 8;
 static const float GAMMA = 2.2f; // eyes see brightness on a curve, so even steps look even
 
-static const unsigned long FALL_ASLEEP_MS = 60000; // bedtime fade to dark
-static const unsigned long WAKE_UP_MS = 60000;     // morning fade up
-static const unsigned long SETTLE_MS = 4000;       // dozing back off after a tap
-static const unsigned long REST_AFTER_ASK_MS = 10000;
-static const float PEEK_LEVEL = 0.2f; // how bright a tap at night lights the screen
+// how long the screen takes to fade to dark, depending on why he's going to sleep
+static const unsigned long BEDTIME_FADE_MS = 60000;
+static const unsigned long AFTER_ASK_FADE_MS = 10000;
+static const unsigned long SETTLE_FADE_MS = 4000; // after a tap
+static const unsigned long WAKE_UP_MS = 60000;    // the morning fade up
+static const unsigned long TAP_WAKE_MS = 500;     // a tap during that fade hurries it along
+
+// a tap at night
+static const float PEEK_LEVEL = 0.2f;
 static const unsigned long PEEK_FADE_MS = 800;
 static const unsigned long PEEK_MS = 30000;
 static const unsigned long GROGGY_MS = 6000;
+
+// woken by a question: brighten with his eyes shut, open them slowly, one slow blink.
+// Nothing else touches his face until this is done (sleepFaceFree), so it never fights the thinking
+static const unsigned long ROUSE_FADE_MS = 600;
+static const unsigned long ROUSE_OPEN_MS = 500;
+static const unsigned long ROUSE_BLINK_MS = 600;
+
+// drifting off: a sleepy beat, maybe a yawn, then the eyes close slowly to a slit
+static const unsigned long DRIFT_HOLD_MS = 1200;
+static const unsigned long DRIFT_CLOSE_MS = 1200;
+static const float SLIT = 0.08f; // how open the eyes are when the closed curves take over
 
 // yawns while he's drowsy, a few minutes apart
 static const long YAWN_MIN_MS = 3L * 60 * 1000;
@@ -56,20 +70,31 @@ enum class Sleep
 {
     Awake,
     Drowsy,        // 10:30 to 11: sleepy lids and yawns
+    DriftingOff,   // eyes open and sleepy, closing slowly
     FallingAsleep, // eyes closed, the screen fading to dark
     Asleep,        // dark, nothing drawn
     Peek,          // tapped: dim, sleeping face, a drifting z
     Groggy,        // tapped again: half awake for a moment
-    Answering,     // a question at night: fully awake until it's done
+    Rousing,       // woken by a question: brightening, eyes opening, one blink
+    Answering,     // awake until the question and its mood hold are done
     Waking,        // 7:30: fading up with his eyes still closed
+};
+
+// the steps inside DriftingOff
+enum class Drift
+{
+    Hold,
+    Yawn,
+    Close,
 };
 
 static Sleep state = Sleep::Awake;
 static unsigned long stateStart = 0;
 static bool started = false;
 static int forced = -1;
+static bool wasBusy = false; // to notice the moment an answer finishes
 
-static bool closedEyes = false; // drawSleep covers the face with closed eyes
+static bool closedEyes = false; // drawSleep draws closed eyes where the open ones would be
 static bool showZ = false;
 
 // the backlight fade, from one level to another over a set time
@@ -77,11 +102,15 @@ static float level = 1.0f;
 static float fadeFrom = 1.0f, fadeTo = 1.0f;
 static unsigned long fadeStart = 0, fadeMs = 0;
 
-static bool wasBusy = false; // to notice the moment an answer finishes
-
 static bool yawning = false;
 static unsigned long yawnStart = 0;
 static unsigned long nextYawnAt = 0;
+
+// what this drift-off does once the eyes are shut
+static Drift driftStep = Drift::Hold;
+static bool driftYawn = false;
+static unsigned long driftFadeMs = 0;
+static unsigned long closeStart = 0;
 
 static void goTo(Sleep next)
 {
@@ -123,21 +152,14 @@ static bool fadeDone()
 
 static void updateFade()
 {
+    if (fadeDone())
+    {
+        return; // nothing moving, don't touch the pin
+    }
     float t = fadeMs == 0 ? 1 : (millis() - fadeStart) / (float)fadeMs;
-    if (t > 1)
-    {
-        t = 1;
-    }
-    float next = fadeFrom + (fadeTo - fadeFrom) * easeInOut(t);
-    if (t >= 1)
-    {
-        next = fadeTo; // land exactly, so fadeDone() can compare
-    }
-    if (next != level)
-    {
-        level = next;
-        writeBacklight(level);
-    }
+    // land exactly on the target at the end, so fadeDone() can compare with ==
+    level = t >= 1 ? fadeTo : fadeFrom + (fadeTo - fadeFrom) * easeInOut(t);
+    writeBacklight(level);
 }
 
 static void updateYawn()
@@ -184,12 +206,27 @@ static void scheduleYawn()
     nextYawnAt = millis() + random(YAWN_MIN_MS, YAWN_MAX_MS);
 }
 
+// one slow blink as a stretch value: close, a short hold shut, then open more slowly
+static float blinkStretch(unsigned long ms)
+{
+    float p = ms / (float)ROUSE_BLINK_MS;
+    if (p < 0.33f)
+    {
+        return 1 - (1 - SLIT) * easeInOut(p / 0.33f);
+    }
+    if (p < 0.5f)
+    {
+        return SLIT;
+    }
+    return SLIT + (1 - SLIT) * easeInOut((p - 0.5f) / 0.5f);
+}
+
 static void closeEyes(bool z)
 {
     closedEyes = true;
     showZ = z;
     yawning = false;
-    setFaceStretch(1);
+    setFaceStretch(1); // reset under the cover, so the eyes are normal when they open again
 }
 
 static void openEyes()
@@ -198,11 +235,41 @@ static void openEyes()
     showZ = false;
 }
 
-static void fallAsleep(unsigned long ms)
+// eyes are already shut (a peek running out): just fade the screen
+static void fallAsleep(unsigned long fadeMsToDark)
 {
     closeEyes(true);
-    startFade(0, ms);
+    startFade(0, fadeMsToDark);
     goTo(Sleep::FallingAsleep);
+}
+
+// eyes are open: a beat with heavy lids, maybe a yawn, close slowly, then fade
+static void driftOff(unsigned long fadeMsToDark, bool yawnFirst, Expression look)
+{
+    setExpression(look);
+    yawning = false;
+    setFaceStretch(1);
+    driftFadeMs = fadeMsToDark;
+    driftYawn = yawnFirst;
+    driftStep = Drift::Hold;
+    goTo(Sleep::DriftingOff);
+}
+
+// woken for a question, from any of the night states
+static void rouse()
+{
+    showZ = false;
+    yawning = false;
+    startFade(1, ROUSE_FADE_MS);
+    goTo(Sleep::Rousing);
+    if (!closedEyes)
+    {
+        // already open (groggy, or mid drift-off): skip the brightening and the opening,
+        // ease the lids up to sleepy and go straight to the blink
+        setFaceStretch(1);
+        setExpression(SLEEPY);
+        stateStart -= ROUSE_FADE_MS + ROUSE_OPEN_MS;
+    }
 }
 
 void sleepInit()
@@ -215,14 +282,8 @@ void sleepInit()
 
 void updateSleep(bool steveBusy)
 {
-    // the clock, without blocking, same as the morning
-    bool haveClock = timeIsValid();
-    struct tm t = {};
-    if (haveClock)
-    {
-        time_t now = time(nullptr);
-        localtime_r(&now, &t);
-    }
+    struct tm t;
+    bool haveClock = localNow(t);
     int minutes = t.tm_hour * 60 + t.tm_min;
     bool night = haveClock && (minutes >= SLEEP_MIN || minutes < WAKE_MIN);
     bool drowsy = haveClock && minutes >= DROWSY_MIN && minutes < SLEEP_MIN;
@@ -248,14 +309,22 @@ void updateSleep(bool steveBusy)
     updateFade();
     updateYawn();
 
+    // a question at night wakes him from any of the sleeping states
+    bool sleeping = state == Sleep::DriftingOff || state == Sleep::FallingAsleep ||
+                    state == Sleep::Asleep || state == Sleep::Peek || state == Sleep::Groggy ||
+                    state == Sleep::Waking;
+    if (steveBusy && sleeping)
+    {
+        rouse();
+    }
+
     switch (state)
     {
     case Sleep::Awake:
         if (night)
         {
             setFaceMode(FACE_FULL);
-            setExpression(SLEEPY);
-            fallAsleep(FALL_ASLEEP_MS);
+            driftOff(BEDTIME_FADE_MS, true, SLEEPY);
         }
         else if (drowsy)
         {
@@ -269,7 +338,7 @@ void updateSleep(bool steveBusy)
     case Sleep::Drowsy:
         if (night)
         {
-            fallAsleep(FALL_ASLEEP_MS);
+            driftOff(BEDTIME_FADE_MS, true, SLEEPY);
         }
         else if (!drowsy)
         {
@@ -291,14 +360,57 @@ void updateSleep(bool steveBusy)
         }
         break;
 
-    case Sleep::FallingAsleep:
-        if (steveBusy)
+    case Sleep::DriftingOff:
+        if (!night)
         {
-            openEyes();
-            startFade(1, PEEK_FADE_MS);
-            goTo(Sleep::Answering);
+            setFaceStretch(1);
+            setExpression(NEUTRAL);
+            goTo(Sleep::Awake);
+            break;
         }
-        else if (!night)
+        switch (driftStep)
+        {
+        case Drift::Hold:
+            if (timeInState() >= DRIFT_HOLD_MS)
+            {
+                if (driftYawn)
+                {
+                    startYawn();
+                    driftStep = Drift::Yawn;
+                }
+                else
+                {
+                    closeStart = millis();
+                    driftStep = Drift::Close;
+                }
+            }
+            break;
+        case Drift::Yawn:
+            if (!yawning)
+            {
+                closeStart = millis();
+                driftStep = Drift::Close;
+            }
+            break;
+        case Drift::Close:
+        {
+            float c = (millis() - closeStart) / (float)DRIFT_CLOSE_MS;
+            if (c >= 1)
+            {
+                // down to a slit: swap to the closed curves and start the fade
+                fallAsleep(driftFadeMs);
+            }
+            else
+            {
+                setFaceStretch(1 - (1 - SLIT) * easeInOut(c));
+            }
+            break;
+        }
+        }
+        break;
+
+    case Sleep::FallingAsleep:
+        if (!night)
         {
             startFade(1, WAKE_UP_MS);
             goTo(Sleep::Waking);
@@ -311,49 +423,67 @@ void updateSleep(bool steveBusy)
         break;
 
     case Sleep::Asleep:
-        if (steveBusy)
+        if (!night)
         {
-            openEyes();
-            startFade(1, PEEK_FADE_MS);
-            goTo(Sleep::Answering);
-        }
-        else if (!night)
-        {
-            showZ = false;
             startFade(1, WAKE_UP_MS);
             goTo(Sleep::Waking);
         }
         break;
 
     case Sleep::Peek:
-        if (steveBusy)
+        if (timeInState() >= PEEK_MS)
         {
-            openEyes();
-            startFade(1, PEEK_FADE_MS);
-            goTo(Sleep::Answering);
-        }
-        else if (timeInState() >= PEEK_MS)
-        {
-            fallAsleep(SETTLE_MS);
+            fallAsleep(SETTLE_FADE_MS);
         }
         break;
 
     case Sleep::Groggy:
         if (timeInState() >= GROGGY_MS)
         {
-            // "go away, I'm sleeping": eyes shut, back to dark
-            fallAsleep(SETTLE_MS);
+            driftOff(SETTLE_FADE_MS, false, GROGGY); // no yawn, he just wants you to go away
         }
         break;
 
+    case Sleep::Rousing:
+    {
+        unsigned long e = timeInState();
+        if (e < ROUSE_FADE_MS)
+        {
+            break; // brightening, eyes still shut so you see him asleep first
+        }
+        if (closedEyes)
+        {
+            // swap the closed curves for a slit, the same size they closed to,
+            // so opening is the drift-off played backwards
+            openEyes();
+            setExpression(SLEEPY);
+            setFaceStretch(SLIT);
+        }
+        unsigned long o = e - ROUSE_FADE_MS;
+        if (o < ROUSE_OPEN_MS)
+        {
+            setFaceStretch(SLIT + (1 - SLIT) * easeInOut(o / (float)ROUSE_OPEN_MS));
+        }
+        else if (o < ROUSE_OPEN_MS + ROUSE_BLINK_MS)
+        {
+            setFaceStretch(blinkStretch(o - ROUSE_OPEN_MS));
+        }
+        else
+        {
+            // awake: hand his face back, the thinking starts from these sleepy lids
+            setFaceStretch(1);
+            goTo(Sleep::Answering);
+        }
+        break;
+    }
+
     case Sleep::Answering:
-        // stay up until the answer and its mood hold are done, then doze off again
+        // stay up until the answer and its mood hold are done, then drift back off
         if (!steveBusy)
         {
             if (night)
             {
-                setExpression(SLEEPY);
-                fallAsleep(REST_AFTER_ASK_MS);
+                driftOff(AFTER_ASK_FADE_MS, true, SLEEPY);
             }
             else
             {
@@ -365,7 +495,7 @@ void updateSleep(bool steveBusy)
     case Sleep::Waking:
         if (night)
         {
-            fallAsleep(SETTLE_MS); // a test flipped it back
+            fallAsleep(SETTLE_FADE_MS); // a test flipped it back
         }
         else if (fadeDone() && closedEyes)
         {
@@ -398,19 +528,39 @@ bool sleepTap()
         return true;
 
     case Sleep::Peek:
+    case Sleep::DriftingOff:
         // bothered him: heavy lids, looking at you
         openEyes();
+        yawning = false;
+        setFaceStretch(1);
         setExpression(GROGGY);
         goTo(Sleep::Groggy);
         return true;
 
-    case Sleep::Groggy:
     case Sleep::Waking:
+        // a tap during the slow morning fade: wake up now instead of in a minute.
+        // The Waking case opens his eyes as soon as this shorter fade lands
+        startFade(1, TAP_WAKE_MS);
+        return true;
+
+    case Sleep::Groggy:
+    case Sleep::Rousing:
         return true; // already reacting, the tap shouldn't reach anything else
 
     default:
         return false; // awake: taps belong to the morning and the briefing
     }
+}
+
+bool sleepCoversFace()
+{
+    return closedEyes;
+}
+
+bool sleepFaceFree()
+{
+    // closed eyes or mid wake-up: anything main shows now would be hidden or fight the animation
+    return !closedEyes && state != Sleep::Rousing;
 }
 
 bool sleepScreenDark()
@@ -435,8 +585,7 @@ void drawSleep()
         return;
     }
 
-    // hide the open eyes underneath and draw closed ones instead
-    frame.fillRect(REGION_X, REGION_Y, REGION_W, REGION_H, TFT_BLACK);
+    // main skipped drawFace() and already cleared the face area, so just the closed eyes
     for (int side = -1; side <= 1; side += 2)
     {
         int cx = CENTER_X + side * EYE_SPACING;

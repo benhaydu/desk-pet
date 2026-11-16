@@ -73,9 +73,3 @@ void updateNetwork()
         break;
     }
 }
-
-bool timeIsValid()
-{
-    struct tm t;
-    return getLocalTime(&t, 0);
-}

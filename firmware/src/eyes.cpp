@@ -21,9 +21,9 @@ static const int SCAN_RANGE_X = 40;   // how far left and right the sweep goes
 static const int SCAN_Y = -12;        // a little above centre
 static const float SCAN_SPEED = 2.2f; // radians per second, one sweep about every 3 s
 static const float THINK_HEIGHT_SCALE = 0.5f;
-static const unsigned long THINK_FADE_MS = 250;
+static const unsigned long THINK_FADE_MS = 450; // long enough that ending a think reads as a glide, not a pop
 
-static const int EXPR_MS = 250;                 // how long a morph takes
+static const int EXPR_MS = 350;                 // how long a morph takes
 static const unsigned long SCALE_FADE_MS = 300; // how long a resize takes
 static const float GAZE_FOLLOW_S = 0.12f;       // how quickly the eyes catch up to a scene's target
 

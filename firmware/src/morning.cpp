@@ -2,8 +2,8 @@
 #include <time.h>
 #include "morning.h"
 #include "ask.h"
+#include "clocktime.h"
 #include "eyes.h"
-#include "net.h"
 #include "player.h"
 #include "reading.h"
 
@@ -88,14 +88,8 @@ static void finishDay(int today)
 
 void updateMorning(bool steveBusy)
 {
-    // the clock, without blocking: getLocalTime() can wait up to 5 s if the time isn't set
-    bool haveClock = timeIsValid();
-    struct tm t = {};
-    if (haveClock)
-    {
-        time_t now = time(nullptr);
-        localtime_r(&now, &t);
-    }
+    struct tm t;
+    bool haveClock = localNow(t);
     int minutes = t.tm_hour * 60 + t.tm_min;
     int today = t.tm_year * 1000 + t.tm_yday; // one number per day, different every year
     bool weekday = t.tm_wday >= 1 && t.tm_wday <= 5;

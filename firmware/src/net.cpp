@@ -12,7 +12,7 @@ enum NetState
 
 static NetState netstate = NET_DISCONNECTED;
 
-static const int TIMEOUT_MS = 15000;
+static const int TIMEOUT_MS = 30000;
 static const int RETRY_MS = 5000;
 static unsigned long start_connect = 0;
 static unsigned long retry_timer = 0;
@@ -56,10 +56,10 @@ void updateNetwork()
         }
         else if (millis() - start_connect >= TIMEOUT_MS)
         {
+            // print first: disconnect() resets the status, which hid the real reason before
+            Serial.printf("Wi-Fi timed out (status %d), retrying\n", WiFi.status());
             WiFi.disconnect();
             retry_timer = millis();
-            Serial.println("Wi-Fi timed out, retrying");
-            Serial.printf("Wi-Fi timed out, status %d\n", WiFi.status());
             netstate = NET_DISCONNECTED;
         }
         break;

@@ -323,8 +323,12 @@ void updateSleep(bool steveBusy)
     case Sleep::Awake:
         if (night)
         {
-            setFaceMode(FACE_FULL);
-            driftOff(BEDTIME_FADE_MS, true, SLEEPY);
+            // past bedtime, but a timer (or an answer) keeps him up until it's done
+            if (!steveBusy)
+            {
+                setFaceMode(FACE_FULL);
+                driftOff(BEDTIME_FADE_MS, true, SLEEPY);
+            }
         }
         else if (drowsy)
         {
@@ -338,7 +342,10 @@ void updateSleep(bool steveBusy)
     case Sleep::Drowsy:
         if (night)
         {
-            driftOff(BEDTIME_FADE_MS, true, SLEEPY);
+            if (!steveBusy)
+            {
+                driftOff(BEDTIME_FADE_MS, true, SLEEPY);
+            }
         }
         else if (!drowsy)
         {

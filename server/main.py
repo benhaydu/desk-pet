@@ -1,6 +1,7 @@
 import os
 import secrets
 import json
+import httpx
 from datetime import datetime
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -13,6 +14,7 @@ from pydantic import BaseModel, Field
 from weather import get_weather
 from briefing import BriefingResponse, build_briefing
 from screen import Expression, Scene, clean_for_screen, fit_text, pick_scene
+from spotify import SpotifyAuthError, now_playing_summary
 
 # pull the API keys out of .env before anything needs them
 load_dotenv()
@@ -108,6 +110,14 @@ class SteveResponse(BaseModel):
 
 class AskRequest(BaseModel):
     text: str
+
+class NowPlaying(BaseModel):
+    playing: bool
+    title: str
+    artist: str
+    progress_ms: int
+    duration_ms: int
+    art_id: str
 
 
 class AskResponse(BaseModel):
@@ -212,3 +222,18 @@ def get_briefing(x_steve_key: str = Header(default="")) -> BriefingResponse:
     except (anthropic.APIError, RuntimeError) as e:
         print("briefing failed:", e)
         raise HTTPException(status_code=502, detail="Steve's brain is unavailable")
+
+@app.get("/now-playing")
+def now_playing(x_steve_key: str = Header(default="")) -> NowPlaying:
+    if not secrets.compare_digest(x_steve_key, steve_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    try:
+        return now_playing_summary()
+    except SpotifyAuthError as e:
+        # only logging in again fixes this, so say so plainly in the logs
+        print("Spotify login needed:", e)
+        raise HTTPException(status_code=503, detail="Spotify needs logging in again")
+    except (RuntimeError, httpx.HTTPError) as e:
+        print("now playing failed:", e)
+        raise HTTPException(status_code=502, detail="Couldn't reach Spotify")

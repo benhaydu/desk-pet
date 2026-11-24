@@ -3,6 +3,8 @@ import time
 
 import httpx
 
+from screen import clean_for_screen
+
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 NOW_PLAYING_URL = "https://api.spotify.com/v1/me/player/currently-playing"
 REFRESH_EARLY_S = 60  # get a new token a minute before it runs out, not after
@@ -12,10 +14,69 @@ _access_token = None
 _expires_at = 0.0       # time.monotonic() when it runs out
 _refresh_token = None   # read from .env on first use, Spotify may hand back a new one
 
+CACHE_S = 3        # answer from the cache for this long, so polling can't hammer Spotify
+TEXT_MAX = 60      # longest title or artist sent to the board, it fits them to the screen itself
+ART_MIN_PX = 100   # smallest album image worth using
+
+_cached = None     # the last summary
+_cached_at = 0.0   # time.monotonic() when it was fetched
+_art_urls = {}     # album id -> image URL, for /art/<id>
+
+NOT_PLAYING = {"playing": False, "title": "", "artist": "", "progress_ms": 0, "duration_ms": 0, "art_id": ""}
 
 class SpotifyAuthError(Exception):
     """The refresh token stopped working: run tools/spotify_login.py again."""
 
+
+def now_playing_summary() -> dict:
+    global _cached, _cached_at
+
+    age = time.monotonic() - _cached_at
+    if _cached is not None and age < CACHE_S:
+        summary = dict(_cached)  # a copy, so the cached one keeps its original progress
+        if summary["playing"]:
+            # the cached progress is `age` seconds old, so move it along to now
+            summary["progress_ms"] = min(summary["progress_ms"] + int(age * 1000), summary["duration_ms"])
+        return summary
+
+    data = currently_playing()
+
+    # paused, nothing on, an ad (no item) or a podcast all count as not playing
+    if (
+        data is None
+        or not data.get("is_playing")
+        or data.get("item") is None
+        or data.get("currently_playing_type") != "track"
+    ):
+        summary = dict(NOT_PLAYING)
+    else:
+        item = data["item"]
+        album = item["album"]
+        art_id = album["id"]
+
+        summary = {
+            "playing": True,
+            "title": clean_for_screen(item["name"])[:TEXT_MAX],
+            "artist": clean_for_screen(", ".join(a["name"] for a in item["artists"]))[:TEXT_MAX],
+            "progress_ms": data["progress_ms"],
+            "duration_ms": item["duration_ms"],
+            "art_id": art_id,
+        }
+
+        # Spotify gives a few sizes, biggest first (usually 640, 300 and 64).
+        # The smallest that's still sharp is the least to download and shrink
+        image = min(
+            (i for i in album["images"] if i["width"] >= ART_MIN_PX),
+            key=lambda i: i["width"],
+            default=None,
+        )
+        if image is not None:
+            _art_urls[art_id] = image["url"]
+
+    _cached = summary
+    _cached_at = time.monotonic()
+    print("spotify: fetched now playing")  # while testing, to see the cache work
+    return summary
 
 def get_access_token() -> str:
     global _access_token, _expires_at, _refresh_token

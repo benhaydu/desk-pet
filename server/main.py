@@ -8,17 +8,18 @@ from zoneinfo import ZoneInfo
 
 import anthropic
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Response
 from pydantic import BaseModel, Field
 
 from weather import get_weather
 from briefing import BriefingResponse, build_briefing
 from screen import Expression, Scene, clean_for_screen, fit_text, pick_scene
 from spotify import SpotifyAuthError, now_playing_summary
+from art import album_art
 
 # pull the API keys out of .env before anything needs them
 load_dotenv()
-steve_key = os.environ["STEVE_KEY"]
+steve_key = os.environ["STEVE_KEY"].strip()  # a stray space or newline pasted in with it would lock the board out
 if not steve_key:
     raise RuntimeError("STEVE_KEY is empty, refusing to start")
 weather_key = os.environ["WEATHER_API_KEY"]
@@ -98,6 +99,10 @@ TOOLS = [
 ]
 
 MAX_TOOL_ROUNDS = 3
+
+# album art sizes the board can ask for, so a typo can't ask for something huge
+ART_MIN_SIZE = 32
+ART_MAX_SIZE = 200
 
 
 class SteveResponse(BaseModel):
@@ -237,3 +242,23 @@ def now_playing(x_steve_key: str = Header(default="")) -> NowPlaying:
     except (RuntimeError, httpx.HTTPError) as e:
         print("now playing failed:", e)
         raise HTTPException(status_code=502, detail="Couldn't reach Spotify")
+
+
+@app.get("/art/{art_id}")
+def get_art(art_id: str, size: int = 120, x_steve_key: str = Header(default="")) -> Response:
+    if not secrets.compare_digest(x_steve_key, steve_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if not ART_MIN_SIZE <= size <= ART_MAX_SIZE:
+        raise HTTPException(status_code=400, detail=f"size has to be {ART_MIN_SIZE} to {ART_MAX_SIZE}")
+
+    try:
+        data = album_art(art_id, size)
+    except httpx.HTTPError as e:
+        print("album art download failed:", e)
+        raise HTTPException(status_code=502, detail="Couldn't get the album art")
+
+    if data is None:
+        raise HTTPException(status_code=404, detail="Unknown art id, ask /now-playing first")
+
+    # raw pixels, not JSON: size * size * 2 bytes the board copies straight into memory
+    return Response(content=data, media_type="application/octet-stream")

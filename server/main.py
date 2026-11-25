@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from weather import get_weather
 from briefing import BriefingResponse, build_briefing
 from screen import Expression, Scene, clean_for_screen, fit_text, pick_scene
-from spotify import SpotifyAuthError, now_playing_summary
+from spotify import PLAYER_ACTIONS, SpotifyAuthError, now_playing_summary, player
 from art import album_art
 
 # pull the API keys out of .env before anything needs them
@@ -118,12 +118,18 @@ class AskRequest(BaseModel):
 
 class NowPlaying(BaseModel):
     playing: bool
+    paused: bool = False  # a song is up but paused, a tap can start it again
     title: str
     artist: str
     progress_ms: int
     duration_ms: int
     art_id: str
     bpm: float = 0  # 0 = tempo unknown
+
+
+class PlayerResult(BaseModel):
+    ok: bool
+    reason: str = ""  # "no_device" when Spotify isn't open anywhere, "refused" when it said no
 
 
 class AskResponse(BaseModel):
@@ -263,3 +269,23 @@ def get_art(art_id: str, size: int = 120, x_steve_key: str = Header(default=""))
 
     # raw pixels, not JSON: size * size * 2 bytes the board copies straight into memory
     return Response(content=data, media_type="application/octet-stream")
+
+
+@app.post("/player/{action}")
+def player_command(action: str, x_steve_key: str = Header(default="")) -> PlayerResult:
+    if not secrets.compare_digest(x_steve_key, steve_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    if action not in PLAYER_ACTIONS:
+        raise HTTPException(status_code=404, detail=f"Unknown action, try one of {', '.join(PLAYER_ACTIONS)}")
+
+    try:
+        result = player(action)
+    except SpotifyAuthError as e:
+        print("Spotify login needed:", e)
+        raise HTTPException(status_code=503, detail="Spotify needs logging in again")
+    except (RuntimeError, httpx.HTTPError) as e:
+        print("player command failed:", e)
+        raise HTTPException(status_code=502, detail="Couldn't reach Spotify")
+
+    print(f"player {action}: {result}")
+    return PlayerResult(ok=result == "ok", reason="" if result == "ok" else result)

@@ -41,6 +41,7 @@ struct NowPlaying
 {
     bool ok;                  // false = the check failed, which isn't the same as "nothing playing"
     bool playing;
+    bool paused;              // a song is up but paused, so a tap can start it again
     char title[64];           // the server caps these at 60 characters
     char artist[64];
     unsigned long progressMs; // how far into the song, when the server answered
@@ -65,6 +66,12 @@ void briefingLatest(Briefing &out);
 bool nowPlayingRequest();
 unsigned long nowPlayingVersion();
 void nowPlayingLatest(NowPlaying &out);
+
+// controlling Spotify: "play", "pause" or "next". Fire and forget, the next now playing
+// check shows the result
+bool playerRequest(const char *action);
+unsigned long playerVersion();                    // goes up when a command has been sent, worked or not
+bool playerLatest(char *reason, size_t reasonSize); // true if it worked. reason: "no_device", "refused", ...
 
 // album covers from the server's /art: square, raw RGB565, the same kind of values as the team icons
 constexpr int ART_SIZE = 120;

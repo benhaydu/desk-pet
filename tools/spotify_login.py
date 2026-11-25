@@ -11,7 +11,8 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / "server" / ".env")
 
 REDIRECT_URI = "http://127.0.0.1:8888/callback"  # has to match the app's settings exactly
-SCOPES = "user-read-currently-playing user-read-playback-state"
+# reading what plays, and controlling it (pause, play, skip) from the touch wire
+SCOPES = "user-read-currently-playing user-read-playback-state user-modify-playback-state"
 
 client_id = os.getenv("SPOTIFY_CLIENT_ID")
 client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")

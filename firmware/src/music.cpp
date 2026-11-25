@@ -40,20 +40,28 @@ static const float BAND_R = 130;
 static const float BAND_THICK = 13;
 static const float CUP_W = 26, CUP_H = 56, CUP_DROP = 4;
 
-// bobbing along to the song's tempo, which the server looks up. Fast songs get a bob every
-// other beat (half time), slow ones a smooth nod rather than a bounce
-static const float FASTEST_BPM = 130;  // above this, bob at half the tempo
-static const float NOD_BELOW_BPM = 90; // below this, a smooth nod instead of a bounce
-static const int BOB_PX = 4;
-static const int NOD_PX = 3;
-// no tempo: a slow rise and fall like breathing, which fits any song without pretending to be on the beat
-static const unsigned long SWAY_MS = 3000;
-static const int SWAY_PX = 2;
-static const float SWAY_X = 6;      // his eyes drift slowly side to side, kept inside the cups
+// nodding along to the song's tempo, which the server looks up. Every nod is a quick dip and
+// back, however slow the song: he can only move in whole pixels, and a slow 3 px move shows
+// as three separate steps. Slow songs just get longer still moments between nods
+static const float FASTEST_BPM = 130;       // above this, nod every other beat (half time)
+static const unsigned long NOD_MS = 260;    // one dip and back
+static const int NOD_PX = 5;
+// no tempo: no nodding at all. Nodding at a made-up speed is what looked wrong on slow songs
+
+// his eyes look a little down, toward the song, and glance between a few spots now and then.
+// Each glance is a quick move, for the same whole-pixel reason as the nods
+static const float GLANCE_X[] = {-6, 0, 6}; // kept small so his eyes stay inside the headphones
 static const float LOOK_DOWN = 4;
+static const long GLANCE_MIN_MS = 2500, GLANCE_MAX_MS = 5000;
 
 static const unsigned long SETTLE_MS = 400;        // a bit longer than his 300 ms resize
 static const unsigned long HIDE_AFTER_MS = 12000;  // the gap between songs reads as "not playing", don't flash away for that
+static const unsigned long PAUSED_KEEP_MS = 5UL * 60 * 1000; // a paused song stays up this long, so a tap can start it again
+
+// taps: wait this long after a tap for another one before deciding what they meant.
+// About the same as earbuds, short enough that a single tap doesn't feel slow
+static const unsigned long MULTI_TAP_MS = 350;
+static const int PAUSE_BAR_W = 4, PAUSE_BAR_H = 12, PAUSE_GAP = 4;
 static const unsigned long RETURN_DELAY_MS = 500;  // after an answer or a timer, let him get back to normal first
 
 // the song. Paused results come back blank, so this keeps the last one that was playing
@@ -61,6 +69,11 @@ static bool haveSong = false;
 static NowPlaying song = {};
 static unsigned long songAt = 0;       // when that result arrived, to move the progress along
 static unsigned long lastPlayingAt = 0;
+static unsigned long pausedSince = 0;
+static int taps = 0;
+static unsigned long lastTapAt = 0;
+static bool refreshWanted = false;
+static bool showingPlaying = false;    // which face he has on: happy while it plays, neutral paused
 static char artAsked[32] = "";         // the album whose cover was last requested
 
 static uint16_t *artPixels = nullptr;
@@ -87,6 +100,8 @@ static bool nudgeMine = false;
 static bool gazeMine = false;
 
 static int bobOffset();
+static int glance = 1;                 // which of GLANCE_X he's looking at
+static unsigned long nextGlanceAt = 0;
 
 static Rect unite(Rect a, Rect b)
 {
@@ -202,14 +217,15 @@ void musicResult(const NowPlaying &n)
         return; // a failed check says nothing about the music, keep what we had
     }
 
-    if (!n.playing)
+    if (!n.playing && !n.paused)
     {
-        // paused or stopped: freeze the bar where it got to. The screen stays up a few seconds
-        // in case it's only the gap between songs
-        if (haveSong && song.playing)
+        // stopped, or nothing at all: freeze the bar where it got to. The screen stays up a
+        // few seconds in case it's only the gap between songs
+        if (haveSong && (song.playing || song.paused))
         {
             song.progressMs = progressNow();
             song.playing = false;
+            song.paused = false;
             barDirty = true;
         }
         return;
@@ -229,10 +245,22 @@ void musicResult(const NowPlaying &n)
         barDirty = true;
     }
 
+    if (n.paused && !song.paused)
+    {
+        pausedSince = millis();
+    }
+    if (n.paused != song.paused || n.playing != song.playing)
+    {
+        barDirty = true; // the pause sign comes or goes
+    }
+
     song = n;
     songAt = millis();
     haveSong = true;
-    lastPlayingAt = millis();
+    if (n.playing)
+    {
+        lastPlayingAt = millis();
+    }
 
     // a new album: ask for its cover. If the queue is full, artAsked stays the same and the
     // next result tries again
@@ -266,6 +294,75 @@ void musicArtReady()
     barDirty = true;
 }
 
+bool musicTap()
+{
+    if (!shown)
+    {
+        return false;
+    }
+    taps++;
+    lastTapAt = millis();
+    return true;
+}
+
+void musicControl(const char *action)
+{
+    if (!playerRequest(action))
+    {
+        Serial.println("Steve's busy, try again in a sec");
+        return;
+    }
+    refreshWanted = true;
+
+    // show it straight away instead of waiting for Spotify. If it didn't work, the next check
+    // puts the screen right again
+    unsigned long now = millis();
+    if (strcmp(action, "pause") == 0 && song.playing)
+    {
+        song.progressMs = progressNow();
+        song.playing = false;
+        song.paused = true;
+        songAt = now;
+        pausedSince = now;
+        barDirty = true;
+    }
+    else if (strcmp(action, "play") == 0 && !song.playing)
+    {
+        song.playing = true;
+        song.paused = false;
+        songAt = now;
+        lastPlayingAt = now;
+        barDirty = true;
+    }
+    else if (strcmp(action, "next") == 0)
+    {
+        // a quick look to the right, toward the next song, while it changes over
+        glance = 2;
+        nextGlanceAt = now + 1500;
+    }
+}
+
+void musicPlayerResult()
+{
+    char reason[24];
+    if (playerLatest(reason, sizeof(reason)))
+    {
+        return;
+    }
+    if (strcmp(reason, "no_device") == 0)
+    {
+        Serial.println("Spotify isn't open on any device, start it on your phone or computer first");
+    }
+    refreshWanted = true; // undo the guess on screen as soon as possible
+}
+
+bool musicTakeRefresh()
+{
+    bool r = refreshWanted;
+    refreshWanted = false;
+    return r;
+}
+
 void musicSetAside(bool aside)
 {
     setAside = aside;
@@ -290,7 +387,8 @@ static void show()
 {
     setFaceScale(FACE_SCALE, FACE_OFFSET_Y);
     setFaceShift(FACE_SHIFT);
-    setExpression(HAPPY);
+    setExpression(song.playing ? HAPPY : NEUTRAL);
+    showingPlaying = song.playing;
     shown = true;
     leaving = false;
     shownAt = millis();
@@ -332,7 +430,10 @@ void updateMusic()
     }
     wasBlocked = blocked;
 
-    bool want = haveSong && now - lastPlayingAt < HIDE_AFTER_MS && !blocked && now - unblockedAt >= RETURN_DELAY_MS;
+    // up while it plays (and for a few seconds after, between songs), or while a song sits paused
+    bool recent = now - lastPlayingAt < HIDE_AFTER_MS;
+    bool pausedUp = song.paused && now - pausedSince < PAUSED_KEEP_MS;
+    bool want = haveSong && (recent || pausedUp) && !blocked && now - unblockedAt >= RETURN_DELAY_MS;
     if (want && !shown)
     {
         show();
@@ -348,14 +449,41 @@ void updateMusic()
     }
     if (!shown)
     {
+        taps = 0; // taps only mean something while the screen is up
         return;
     }
 
-    // his eyes drift slowly side to side, a little down, toward the song
-    float t = now / 1000.0f;
-    lookAt(SWAY_X * sinf(t * 1.3f), LOOK_DOWN);
+    // the taps have stopped coming: one means play or pause, two or more skip
+    if (taps > 0 && now - lastTapAt >= MULTI_TAP_MS)
+    {
+        int count = taps;
+        taps = 0;
+        if (count == 1)
+        {
+            musicControl(song.playing ? "pause" : "play");
+        }
+        else
+        {
+            musicControl("next");
+        }
+    }
 
-    // moving along while the song plays, still while it's paused
+    // happy while it plays, neutral while it's paused
+    if (song.playing != showingPlaying)
+    {
+        showingPlaying = song.playing;
+        setExpression(showingPlaying ? HAPPY : NEUTRAL);
+    }
+
+    // every few seconds, look at a different spot. The eyes glide there in about a third of a second
+    if ((long)(now - nextGlanceAt) >= 0)
+    {
+        glance = (glance + random(1, 3)) % 3; // any spot but the current one
+        nextGlanceAt = now + random(GLANCE_MIN_MS, GLANCE_MAX_MS);
+    }
+    lookAt(GLANCE_X[glance], LOOK_DOWN);
+
+    // nodding along while the song plays, still while it's paused
     int bob = 0;
     if (song.playing)
     {
@@ -384,26 +512,26 @@ static int bobOffset()
 {
     if (song.bpm <= 0)
     {
-        float t = (millis() % SWAY_MS) / (float)SWAY_MS;
-        return -(int)(SWAY_PX * (1 - cosf(2 * PI * t)) / 2 + 0.5f);
+        return 0;
     }
 
     float bpm = song.bpm;
     while (bpm > FASTEST_BPM)
     {
-        bpm /= 2; // half time: bobbing at 170 beats a minute just looks frantic
+        bpm /= 2; // half time: nodding at 170 beats a minute just looks frantic
     }
     float beatMs = 60000.0f / bpm;
 
     // timed from the song's own position, so it starts fresh with each song and stays put
     // through a pause. Where the first beat falls isn't known, so it's the right speed but
-    // not guaranteed to land on the beat
-    float t = fmodf((float)progressNow(), beatMs) / beatMs;
-    if (bpm < NOD_BELOW_BPM)
+    // not guaranteed to land exactly on the beat
+    float into = fmodf((float)progressNow(), beatMs);
+    if (into >= NOD_MS)
     {
-        return -(int)(NOD_PX * (1 - cosf(2 * PI * t)) / 2 + 0.5f); // smooth down and up
+        return 0; // still until the next beat
     }
-    return -(int)(BOB_PX * fabsf(sinf(PI * t)) + 0.5f); // a little bounce off the bottom
+    // down and back up in one smooth bump. Positive is down: a nod, not a hop
+    return (int)(NOD_PX * sinf(PI * into / NOD_MS) + 0.5f);
 }
 
 static void drawPlaceholder()
@@ -545,6 +673,15 @@ static void drawBar()
     snprintf(text, sizeof(text), "%lu:%02lu", s / 60, s % 60);
     frame.setTextDatum(MR_DATUM);
     frame.drawString(text, BAR_X + BAR_W, TIMES_Y);
+
+    // paused: the usual two bars, in the middle between the times
+    if (song.paused)
+    {
+        int x = BAR_X + BAR_W / 2 - PAUSE_GAP / 2 - PAUSE_BAR_W;
+        int y = TIMES_Y - PAUSE_BAR_H / 2;
+        frame.fillSmoothRoundRect(x, y, PAUSE_BAR_W, PAUSE_BAR_H, 1, TFT_WHITE, TFT_BLACK);
+        frame.fillSmoothRoundRect(x + PAUSE_BAR_W + PAUSE_GAP, y, PAUSE_BAR_W, PAUSE_BAR_H, 1, TFT_WHITE, TFT_BLACK);
+    }
 }
 
 static void drawHeadphones()

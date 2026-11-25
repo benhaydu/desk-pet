@@ -29,6 +29,7 @@ const long MIN_TIMER_MINUTES = 1;
 const long MAX_TIMER_MINUTES = 180;
 
 const unsigned long NOW_PLAYING_POLL_MS = 5000; // how often to ask the server what's playing
+const unsigned long AFTER_COMMAND_MS = 1000;    // after a pause, play or skip, check again this soon
 
 // not static, the drawing modules (eyes, headline, scene, panel, reading, sleep, timerview, vine, music) use it through extern
 TFT_eSPI tft = TFT_eSPI();
@@ -244,9 +245,10 @@ void loop()
   }
 
   // a tap: wakes him a little at night, puts away a timer's ending (or starts the break),
-  // skips a card during the briefing, or starts the briefing while he's reading the paper.
+  // pauses, plays or skips the music, skips a card during the briefing, or starts the briefing
+  // while he's reading the paper.
   // && stops at the first false, so each one only runs if the ones before didn't use the tap
-  if (touchTakePress() && !sleepTap() && !timerViewTap())
+  if (touchTakePress() && !sleepTap() && !timerViewTap() && !musicTap())
   {
     if (playerActive())
     {
@@ -290,6 +292,11 @@ void loop()
     else if (strcmp(question, "/full") == 0)
     {
       setFaceMode(FACE_FULL);
+    }
+    else if (strcmp(question, "/pause") == 0 || strcmp(question, "/play") == 0 || strcmp(question, "/next") == 0)
+    {
+      // the same as tapping while the music is up, but works any time
+      musicControl(question + 1);
     }
     else if (strcmp(question, "/head") == 0)
     {
@@ -516,12 +523,27 @@ void loop()
   static bool nowPlayingWaiting = false;
   static unsigned long nowPlayingAskedAt = 0;
   static unsigned long seenNowPlaying = 0;
+  static bool skipStale = false; // the check that's out was asked before a tap, so it's out of date
+
+  // a pause, play or skip was just sent: check again soon instead of in up to 5 s. A check
+  // already on its way was asked before the command, and would undo what the screen shows
+  if (musicTakeRefresh())
+  {
+    skipStale = nowPlayingWaiting;
+    nowPlayingAskedAt = millis() - NOW_PLAYING_POLL_MS + AFTER_COMMAND_MS;
+  }
+
   if (nowPlayingVersion() != seenNowPlaying)
   {
     seenNowPlaying = nowPlayingVersion();
     nowPlayingWaiting = false;
     NowPlaying n;
     nowPlayingLatest(n);
+    if (skipStale)
+    {
+      skipStale = false;
+      n.ok = false; // musicResult ignores it, the check after the command is the one that counts
+    }
     musicResult(n);
 
     // print only when the song changes, not every 5 s
@@ -529,7 +551,14 @@ void loop()
     if (n.ok && n.playing && strcmp(n.title, lastPrinted) != 0)
     {
       snprintf(lastPrinted, sizeof(lastPrinted), "%s", n.title);
-      Serial.printf("now playing: %s - %s\n", n.title, n.artist);
+      if (n.bpm > 0)
+      {
+        Serial.printf("now playing: %s - %s (%.0f bpm)\n", n.title, n.artist, n.bpm);
+      }
+      else
+      {
+        Serial.printf("now playing: %s - %s (tempo unknown, no nodding)\n", n.title, n.artist);
+      }
     }
   }
   if (!nowPlayingWaiting && !sleepScreenDark() && millis() - nowPlayingAskedAt >= NOW_PLAYING_POLL_MS &&
@@ -537,6 +566,14 @@ void loop()
   {
     nowPlayingWaiting = true;
     nowPlayingAskedAt = millis();
+  }
+
+  // a pause, play or skip came back. Only a failure needs anything doing
+  static unsigned long seenPlayer = 0;
+  if (playerVersion() != seenPlayer)
+  {
+    seenPlayer = playerVersion();
+    musicPlayerResult();
   }
 
   // an album cover finished downloading

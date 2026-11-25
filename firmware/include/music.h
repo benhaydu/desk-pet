@@ -16,3 +16,10 @@ Rect musicRegion();                        // what needs pushing this frame
 bool musicTakeExtra(Rect &out);            // after the main push: a changed part outside that region
 bool musicTakeClear(Rect &out);            // true once after it goes away, with the area to wipe
 void musicSetAside(bool aside);            // true while Steve needs his whole face: answers, the paper, sleep
+
+// controlling Spotify, like the touch on the side of earbuds: one tap pauses or plays, two skip.
+// Taps only count while the Now Playing screen is up
+bool musicTap();                           // a tap. True if the music screen used it
+void musicControl(const char *action);     // "play", "pause" or "next" straight away (the serial commands)
+void musicPlayerResult();                  // playerVersion() changed
+bool musicTakeRefresh();                   // true once after a command: check what's playing again soon

@@ -13,13 +13,14 @@ enum class RequestKind
     Ask,
     Briefing,
     NowPlaying,
-    Art
+    Art,
+    Player
 };
 
 struct Question
 {
     RequestKind kind;
-    char text[128]; // the question, or the album id for art
+    char text[128]; // the question, the album id for art, or the player action
 };
 
 static QueueHandle_t askQueue;
@@ -47,6 +48,11 @@ static char artSharedId[32] = "";
 static bool artOk = false;
 static unsigned long artCount = 0;
 
+// the last play, pause or skip
+static bool playerOk = false;
+static char playerReason[24] = "";
+static unsigned long playerCount = 0;
+
 static void askTask(void *param);
 static void sendQuestion(const char *text);
 static void fetchBriefing();
@@ -57,6 +63,8 @@ static void fetchNowPlaying();
 static void storeNowPlaying(const NowPlaying &n);
 static void fetchArt(const char *artId);
 static void storeArt(const char *artId, bool ok);
+static void sendPlayer(const char *action);
+static void storePlayer(bool ok, const char *reason);
 
 void askStart()
 {
@@ -146,6 +154,31 @@ void nowPlayingLatest(NowPlaying &out)
     xSemaphoreGive(answerLock);
 }
 
+bool playerRequest(const char *action)
+{
+    Question q;
+    q.kind = RequestKind::Player;
+    snprintf(q.text, sizeof(q.text), "%s", action);
+    return xQueueSend(askQueue, &q, 0) == pdTRUE;
+}
+
+unsigned long playerVersion()
+{
+    xSemaphoreTake(answerLock, portMAX_DELAY);
+    unsigned long v = playerCount;
+    xSemaphoreGive(answerLock);
+    return v;
+}
+
+bool playerLatest(char *reason, size_t reasonSize)
+{
+    xSemaphoreTake(answerLock, portMAX_DELAY);
+    snprintf(reason, reasonSize, "%s", playerReason);
+    bool ok = playerOk;
+    xSemaphoreGive(answerLock);
+    return ok;
+}
+
 bool artRequest(const char *artId)
 {
     Question q;
@@ -202,6 +235,10 @@ static void askTask(void *param)
             {
                 fetchArt(q.text);
             }
+            else if (q.kind == RequestKind::Player)
+            {
+                sendPlayer(q.text);
+            }
         }
     }
 }
@@ -249,6 +286,16 @@ static void storeArt(const char *artId, bool ok)
     snprintf(artSharedId, sizeof(artSharedId), "%s", artId);
     artOk = ok;
     artCount++;
+    xSemaphoreGive(answerLock);
+}
+
+// the only place that writes the player result
+static void storePlayer(bool ok, const char *reason)
+{
+    xSemaphoreTake(answerLock, portMAX_DELAY);
+    playerOk = ok;
+    snprintf(playerReason, sizeof(playerReason), "%s", reason);
+    playerCount++;
     xSemaphoreGive(answerLock);
 }
 
@@ -392,6 +439,7 @@ static void fetchNowPlaying()
 
     // | gives a default when a field is missing, so an older server can't crash this
     n.playing = doc["playing"] | false;
+    n.paused = doc["paused"] | false;
     snprintf(n.title, sizeof(n.title), "%s", doc["title"] | "");
     snprintf(n.artist, sizeof(n.artist), "%s", doc["artist"] | "");
     snprintf(n.artId, sizeof(n.artId), "%s", doc["art_id"] | "");
@@ -466,6 +514,51 @@ static void fetchArt(const char *artId)
         Serial.printf("album art cut short: %u of %u bytes\n", (unsigned)got, (unsigned)ART_BYTES);
     }
     storeArt(artId, ok);
+}
+
+// pause, play or skip, through the server. Fire and forget: Spotify does it on its own time,
+// and the next now playing check shows whether it happened
+static void sendPlayer(const char *action)
+{
+    char reason[24] = "offline";
+    bool ok = false;
+
+    if (isOnline())
+    {
+        WiFiClientSecure client;
+        HTTPClient http;
+        client.setInsecure();
+        http.begin(client, String(SERVER_URL) + "/player/" + action);
+        http.addHeader("X-Steve-Key", STEVE_KEY);
+        http.setTimeout(10000);
+
+        int status = http.POST((uint8_t *)nullptr, 0); // a POST with no body: the action is in the address
+        if (status == 200)
+        {
+            JsonDocument doc;
+            if (deserializeJson(doc, http.getString()))
+            {
+                snprintf(reason, sizeof(reason), "bad reply");
+            }
+            else
+            {
+                ok = doc["ok"] | false;
+                snprintf(reason, sizeof(reason), "%s", doc["reason"] | "");
+            }
+        }
+        else
+        {
+            // 503 means Spotify needs logging in again, with the control permission this time
+            snprintf(reason, sizeof(reason), "status %d", status);
+        }
+        http.end();
+    }
+
+    if (!ok)
+    {
+        Serial.printf("player %s didn't work: %s\n", action, reason);
+    }
+    storePlayer(ok, reason);
 }
 
 static void fetchBriefing()

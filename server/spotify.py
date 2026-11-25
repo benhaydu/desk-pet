@@ -8,6 +8,7 @@ from tempo import song_bpm
 
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 NOW_PLAYING_URL = "https://api.spotify.com/v1/me/player/currently-playing"
+PLAYER_URL = "https://api.spotify.com/v1/me/player"
 REFRESH_EARLY_S = 60  # get a new token a minute before it runs out, not after
 
 CACHE_S = 3        # answer from the cache for this long, so polling can't hammer Spotify
@@ -23,7 +24,15 @@ _cached = None     # the last summary
 _cached_at = 0.0   # time.monotonic() when it was fetched
 _art_urls = {}     # album id -> image URL, for /art/<id>
 
-NOT_PLAYING = {"playing": False, "title": "", "artist": "", "progress_ms": 0, "duration_ms": 0, "art_id": "", "bpm": 0.0}
+NOT_PLAYING = {"playing": False, "paused": False, "title": "", "artist": "", "progress_ms": 0, "duration_ms": 0, "art_id": "", "bpm": 0.0}
+
+# what the board can ask for: the HTTP method and path under /me/player for each
+PLAYER_ACTIONS = {
+    "play": ("PUT", "/play"),
+    "pause": ("PUT", "/pause"),
+    "next": ("POST", "/next"),
+    "previous": ("POST", "/previous"),
+}
 
 
 class SpotifyAuthError(Exception):
@@ -99,13 +108,9 @@ def now_playing_summary() -> dict:
 
     data = currently_playing()
 
-    # paused, nothing on, an ad (no item) or a podcast all count as not playing
-    if (
-        data is None
-        or not data.get("is_playing")
-        or data.get("item") is None
-        or data.get("currently_playing_type") != "track"
-    ):
+    # nothing on, an ad (no item) or a podcast all count as not playing. A paused song keeps
+    # its details, so the board can show it paused and a tap can start it again
+    if data is None or data.get("item") is None or data.get("currently_playing_type") != "track":
         summary = dict(NOT_PLAYING)
     else:
         item = data["item"]
@@ -115,7 +120,8 @@ def now_playing_summary() -> dict:
         first_artist = item["artists"][0]["name"] if item["artists"] else ""
 
         summary = {
-            "playing": True,
+            "playing": bool(data.get("is_playing")),
+            "paused": not data.get("is_playing"),
             "title": clean_for_screen(item["name"])[:TEXT_MAX],
             "artist": clean_for_screen(", ".join(a["name"] for a in item["artists"]))[:TEXT_MAX],
             "progress_ms": data["progress_ms"],
@@ -144,3 +150,27 @@ def now_playing_summary() -> dict:
 def art_url(art_id: str) -> str | None:
     """The cover image for an album /now-playing has mentioned, or None if it hasn't."""
     return _art_urls.get(art_id)
+
+
+def player(action: str) -> str:
+    """Pause, play, skip or go back. Returns "ok", or "no_device" when Spotify isn't open
+    anywhere, or "refused" when Spotify won't do it right now (pausing what's already paused)."""
+    global _cached
+
+    method, path = PLAYER_ACTIONS[action]
+    resp = httpx.request(
+        method,
+        PLAYER_URL + path,
+        headers={"Authorization": f"Bearer {get_access_token()}"},
+        timeout=10,
+    )
+    # whatever happened, the cached now playing is out of date: the next check asks Spotify
+    _cached = None
+
+    if resp.status_code in (200, 202, 204):
+        return "ok"
+    if resp.status_code == 404:
+        return "no_device"
+    if resp.status_code == 403:
+        return "refused"
+    raise RuntimeError(f"player {action} failed with status {resp.status_code}")

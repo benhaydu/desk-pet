@@ -7,18 +7,19 @@
 #include <HTTPClient.h>
 
 // what the task should do with a queue item. Only this file needs to know,
-// everyone else just calls askSubmit, briefingRequest or nowPlayingRequest
+// everyone else just calls askSubmit, briefingRequest, nowPlayingRequest or artRequest
 enum class RequestKind
 {
     Ask,
     Briefing,
-    NowPlaying
+    NowPlaying,
+    Art
 };
 
 struct Question
 {
     RequestKind kind;
-    char text[128]; // only used by questions
+    char text[128]; // the question, or the album id for art
 };
 
 static QueueHandle_t askQueue;
@@ -38,6 +39,14 @@ static unsigned long briefingCount = 0;
 static NowPlaying lastNowPlaying;
 static unsigned long nowPlayingCount = 0;
 
+// album art. Two buffers: the task downloads into its own, and only takes the lock for the
+// quick copy into the shared one at the end. A slow download never holds up loop()
+static uint16_t *artDownload = nullptr;
+static uint16_t *artShared = nullptr;
+static char artSharedId[32] = "";
+static bool artOk = false;
+static unsigned long artCount = 0;
+
 static void askTask(void *param);
 static void sendQuestion(const char *text);
 static void fetchBriefing();
@@ -46,12 +55,23 @@ static void storeFallback(const char *headline, const char *reply, const char *e
 static void storeBriefing(const Briefing &b);
 static void fetchNowPlaying();
 static void storeNowPlaying(const NowPlaying &n);
+static void fetchArt(const char *artId);
+static void storeArt(const char *artId, bool ok);
 
 void askStart()
 {
     // queue and lock have to exist before the task starts using them
     askQueue = xQueueCreate(2, sizeof(Question));
     answerLock = xSemaphoreCreateMutex();
+
+    // 28.8 KB each is a lot for the chip's own RAM, so they go in PSRAM like the frame does
+    artDownload = (uint16_t *)ps_malloc(ART_BYTES);
+    artShared = (uint16_t *)ps_malloc(ART_BYTES);
+    if (artDownload == nullptr || artShared == nullptr)
+    {
+        Serial.println("no memory for album art, covers won't download");
+    }
+
     xTaskCreatePinnedToCore(askTask, "ask", 8192, nullptr, 1, nullptr, 0);
 }
 
@@ -126,6 +146,35 @@ void nowPlayingLatest(NowPlaying &out)
     xSemaphoreGive(answerLock);
 }
 
+bool artRequest(const char *artId)
+{
+    Question q;
+    q.kind = RequestKind::Art;
+    snprintf(q.text, sizeof(q.text), "%s", artId);
+    return xQueueSend(askQueue, &q, 0) == pdTRUE;
+}
+
+unsigned long artVersion()
+{
+    xSemaphoreTake(answerLock, portMAX_DELAY);
+    unsigned long v = artCount;
+    xSemaphoreGive(answerLock);
+    return v;
+}
+
+bool artLatest(char *artId, size_t idSize, uint16_t *pixels)
+{
+    xSemaphoreTake(answerLock, portMAX_DELAY);
+    snprintf(artId, idSize, "%s", artSharedId);
+    bool ok = artOk;
+    if (ok && pixels != nullptr)
+    {
+        memcpy(pixels, artShared, ART_BYTES);
+    }
+    xSemaphoreGive(answerLock);
+    return ok;
+}
+
 static void askTask(void *param)
 {
     for (;;)
@@ -148,6 +197,10 @@ static void askTask(void *param)
             {
                 // no print here: it runs every 5 seconds and would bury everything else
                 fetchNowPlaying();
+            }
+            else if (q.kind == RequestKind::Art)
+            {
+                fetchArt(q.text);
             }
         }
     }
@@ -181,6 +234,21 @@ static void storeBriefing(const Briefing &b)
     xSemaphoreTake(answerLock, portMAX_DELAY);
     lastBriefing = b;
     briefingCount++;
+    xSemaphoreGive(answerLock);
+}
+
+// the only place that writes the shared album art. A failure still bumps the version,
+// with ok false, so whoever asked can show a placeholder instead of waiting
+static void storeArt(const char *artId, bool ok)
+{
+    xSemaphoreTake(answerLock, portMAX_DELAY);
+    if (ok)
+    {
+        memcpy(artShared, artDownload, ART_BYTES);
+    }
+    snprintf(artSharedId, sizeof(artSharedId), "%s", artId);
+    artOk = ok;
+    artCount++;
     xSemaphoreGive(answerLock);
 }
 
@@ -332,6 +400,71 @@ static void fetchNowPlaying()
 
     n.ok = true; // only now: everything above worked
     storeNowPlaying(n);
+}
+
+static void fetchArt(const char *artId)
+{
+    if (artDownload == nullptr || !isOnline())
+    {
+        storeArt(artId, false);
+        return;
+    }
+
+    WiFiClientSecure client;
+    HTTPClient http;
+    client.setInsecure();
+    http.begin(client, String(SERVER_URL) + "/art/" + artId + "?size=" + String(ART_SIZE));
+    http.addHeader("X-Steve-Key", STEVE_KEY);
+    http.setTimeout(10000);
+
+    unsigned long getStart = millis();
+    int status = http.GET();
+    if (status != 200)
+    {
+        Serial.printf("album art failed, status %d\n", status);
+        http.end();
+        storeArt(artId, false);
+        return;
+    }
+
+    // the server says how big the body is: it has to be exactly one square of pixels
+    int size = http.getSize();
+    if (size != (int)ART_BYTES)
+    {
+        Serial.printf("album art is %d bytes, expected %u\n", size, (unsigned)ART_BYTES);
+        http.end();
+        storeArt(artId, false);
+        return;
+    }
+
+    // read the bytes straight into the pixel buffer. getString() would first copy all 28.8 KB
+    // into a String in the chip's own RAM. The server sends them low byte first, the same
+    // order the ESP32 keeps a uint16_t in, so no converting is needed
+    auto *stream = http.getStreamPtr();
+    uint8_t *into = (uint8_t *)artDownload;
+    size_t got = 0;
+    while (got < ART_BYTES && millis() - getStart < 15000)
+    {
+        // waits up to a second for more to arrive, returns 0 if nothing came
+        size_t n = stream->readBytes(into + got, ART_BYTES - got);
+        got += n;
+        if (n == 0 && !http.connected())
+        {
+            break; // the connection closed before everything arrived
+        }
+    }
+    http.end();
+
+    bool ok = got == ART_BYTES;
+    if (ok)
+    {
+        Serial.printf("album art took %lu ms\n", millis() - getStart);
+    }
+    else
+    {
+        Serial.printf("album art cut short: %u of %u bytes\n", (unsigned)got, (unsigned)ART_BYTES);
+    }
+    storeArt(artId, ok);
 }
 
 static void fetchBriefing()

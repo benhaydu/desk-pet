@@ -35,6 +35,10 @@ TFT_eSprite frame = TFT_eSprite(&tft);
 
 unsigned long lastFrameTime = 0;
 
+// the latest album cover, in PSRAM. For now only /art shows it, the Now Playing screen will later
+static uint16_t *albumArt = nullptr;
+static bool haveArt = false;
+
 static Rect combine(Rect a, Rect b);
 static long parseMinutes(const char *text);
 
@@ -56,6 +60,8 @@ void setup()
   eyesInit();
   networkInit();
   askStart();
+
+  albumArt = (uint16_t *)ps_malloc(ART_BYTES);
 }
 
 void loop()
@@ -261,6 +267,23 @@ void loop()
     else if (strcmp(question, "/full") == 0)
     {
       setFaceMode(FACE_FULL);
+    }
+    else if (strcmp(question, "/art") == 0)
+    {
+      // test only: the last album cover in the middle of the screen. Do /mini first, so the
+      // big face isn't drawn over it, and /full to put everything back
+      if (!haveArt)
+      {
+        Serial.println("no album art yet, play a song first");
+      }
+      else
+      {
+        // pushImage sends each value's bytes in the opposite order to how they sit in memory,
+        // so it has to be told to swap them back. Without this the colours come out scrambled
+        tft.setSwapBytes(true);
+        tft.pushImage((tft.width() - ART_SIZE) / 2, (tft.height() - ART_SIZE) / 2, ART_SIZE, ART_SIZE, albumArt);
+        tft.setSwapBytes(false);
+      }
     }
     else if (strcmp(question, "/head") == 0)
     {
@@ -493,6 +516,14 @@ void loop()
     NowPlaying n;
     nowPlayingLatest(n);
 
+    // a different album from the last one asked for: get its cover. If the queue happens to be
+    // full, artRequested stays the same and the next result (5 s later) tries again
+    static char artRequested[32] = "";
+    if (n.ok && n.playing && n.artId[0] != '\0' && strcmp(n.artId, artRequested) != 0 && artRequest(n.artId))
+    {
+      snprintf(artRequested, sizeof(artRequested), "%s", n.artId);
+    }
+
     if (!n.ok)
     {
       Serial.println("now playing check failed");
@@ -509,6 +540,16 @@ void loop()
                     n.title, n.artist, at / 60, at % 60, length / 60, length % 60);
     }
   }
+  // a cover finished downloading
+  static unsigned long seenArt = 0;
+  if (artVersion() != seenArt)
+  {
+    seenArt = artVersion();
+    char artId[32];
+    haveArt = albumArt != nullptr && artLatest(artId, sizeof(artId), albumArt);
+    Serial.printf("album art %s: %s\n", artId, haveArt ? "ready, /mini then /art to see it" : "failed");
+  }
+
   // && stops at the first false, so a request is only sent when the first two are true
   if (!nowPlayingWaiting && millis() - nowPlayingAskedAt >= NOW_PLAYING_POLL_MS && nowPlayingRequest())
   {

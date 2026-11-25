@@ -1,4 +1,6 @@
 #pragma once
+#include <stddef.h>
+#include <stdint.h>
 
 // talks to Steve's server on a background task, so loop() never waits on the network
 
@@ -62,3 +64,13 @@ void briefingLatest(Briefing &out);
 bool nowPlayingRequest();
 unsigned long nowPlayingVersion();
 void nowPlayingLatest(NowPlaying &out);
+
+// album covers from the server's /art: square, raw RGB565, the same kind of values as the team icons
+constexpr int ART_SIZE = 120;
+constexpr size_t ART_BYTES = ART_SIZE * ART_SIZE * sizeof(uint16_t);
+
+bool artRequest(const char *artId); // download this album's cover in the background
+unsigned long artVersion();         // goes up when a download finishes, even a failed one
+// copies the last download out: its album id, and the pixels if it worked (pixels must hold
+// ART_SIZE * ART_SIZE). False if that download failed
+bool artLatest(char *artId, size_t idSize, uint16_t *pixels);

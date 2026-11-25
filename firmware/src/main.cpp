@@ -27,6 +27,8 @@ const unsigned long PROMPT_TIMEOUT_MS = 30000; // give up on "how many minutes?"
 const long MIN_TIMER_MINUTES = 1;
 const long MAX_TIMER_MINUTES = 180;
 
+const unsigned long NOW_PLAYING_POLL_MS = 5000; // how often to ask the server what's playing
+
 // not static, the drawing modules (eyes, headline, scene, panel, reading, sleep, timerview, vine) use it through extern
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
@@ -477,6 +479,41 @@ void loop()
       holdingMood = false;
       playerStart(b); // does nothing if it's empty
     }
+  }
+
+  // for now: ask the server what's playing every 5 s and print what comes back.
+  // Only one check at a time, so a slow server can't fill the queue and block questions
+  static bool nowPlayingWaiting = false;
+  static unsigned long nowPlayingAskedAt = 0;
+  static unsigned long seenNowPlaying = 0;
+  if (nowPlayingVersion() != seenNowPlaying)
+  {
+    seenNowPlaying = nowPlayingVersion();
+    nowPlayingWaiting = false;
+    NowPlaying n;
+    nowPlayingLatest(n);
+
+    if (!n.ok)
+    {
+      Serial.println("now playing check failed");
+    }
+    else if (!n.playing)
+    {
+      Serial.println("nothing playing");
+    }
+    else
+    {
+      unsigned long at = n.progressMs / 1000;
+      unsigned long length = n.durationMs / 1000;
+      Serial.printf("now playing: %s - %s  %lu:%02lu / %lu:%02lu\n",
+                    n.title, n.artist, at / 60, at % 60, length / 60, length % 60);
+    }
+  }
+  // && stops at the first false, so a request is only sent when the first two are true
+  if (!nowPlayingWaiting && millis() - nowPlayingAskedAt >= NOW_PLAYING_POLL_MS && nowPlayingRequest())
+  {
+    nowPlayingWaiting = true;
+    nowPlayingAskedAt = millis();
   }
 
   // relax back to neutral once, after the hold runs out. The briefing sets its own faces

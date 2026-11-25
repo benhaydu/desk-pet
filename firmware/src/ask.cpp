@@ -7,22 +7,23 @@
 #include <HTTPClient.h>
 
 // what the task should do with a queue item. Only this file needs to know,
-// everyone else just calls askSubmit or briefingRequest
+// everyone else just calls askSubmit, briefingRequest or nowPlayingRequest
 enum class RequestKind
 {
     Ask,
-    Briefing
+    Briefing,
+    NowPlaying
 };
 
 struct Question
 {
     RequestKind kind;
-    char text[128]; // empty for a briefing
+    char text[128]; // only used by questions
 };
 
 static QueueHandle_t askQueue;
 
-// one lock for both results below, each is only held long enough to copy
+// one lock for all the results below, each is only held long enough to copy
 static SemaphoreHandle_t answerLock;
 
 // latest answer, shared between the ask task (core 0) and loop (core 1)
@@ -33,12 +34,18 @@ static unsigned long answerVersion = 0;
 static Briefing lastBriefing;
 static unsigned long briefingCount = 0;
 
+// what's playing on Spotify, polled every few seconds
+static NowPlaying lastNowPlaying;
+static unsigned long nowPlayingCount = 0;
+
 static void askTask(void *param);
 static void sendQuestion(const char *text);
 static void fetchBriefing();
 static void storeAnswer(const Answer &a);
 static void storeFallback(const char *headline, const char *reply, const char *expr);
 static void storeBriefing(const Briefing &b);
+static void fetchNowPlaying();
+static void storeNowPlaying(const NowPlaying &n);
 
 void askStart()
 {
@@ -96,6 +103,29 @@ void briefingLatest(Briefing &out)
     xSemaphoreGive(answerLock);
 }
 
+bool nowPlayingRequest()
+{
+    Question q;
+    q.kind = RequestKind::NowPlaying;
+    q.text[0] = '\0';
+    return xQueueSend(askQueue, &q, 0) == pdTRUE;
+}
+
+unsigned long nowPlayingVersion()
+{
+    xSemaphoreTake(answerLock, portMAX_DELAY);
+    unsigned long v = nowPlayingCount;
+    xSemaphoreGive(answerLock);
+    return v;
+}
+
+void nowPlayingLatest(NowPlaying &out)
+{
+    xSemaphoreTake(answerLock, portMAX_DELAY);
+    out = lastNowPlaying;
+    xSemaphoreGive(answerLock);
+}
+
 static void askTask(void *param)
 {
     for (;;)
@@ -109,10 +139,15 @@ static void askTask(void *param)
                 Serial.printf("ask task got: briefing (core %d)\n", xPortGetCoreID());
                 fetchBriefing();
             }
-            else
+            else if (q.kind == RequestKind::Ask)
             {
                 Serial.printf("ask task got: %s (core %d)\n", q.text, xPortGetCoreID());
                 sendQuestion(q.text);
+            }
+            else if (q.kind == RequestKind::NowPlaying)
+            {
+                // no print here: it runs every 5 seconds and would bury everything else
+                fetchNowPlaying();
             }
         }
     }
@@ -146,6 +181,16 @@ static void storeBriefing(const Briefing &b)
     xSemaphoreTake(answerLock, portMAX_DELAY);
     lastBriefing = b;
     briefingCount++;
+    xSemaphoreGive(answerLock);
+}
+
+// the only place that writes the shared now playing. Failures get stored too (with ok false),
+// so loop() always hears back and knows it can ask again
+static void storeNowPlaying(const NowPlaying &n)
+{
+    xSemaphoreTake(answerLock, portMAX_DELAY);
+    lastNowPlaying = n;
+    nowPlayingCount++;
     xSemaphoreGive(answerLock);
 }
 
@@ -225,6 +270,70 @@ static void sendQuestion(const char *text)
     storeAnswer(a);
 }
 
+static void fetchNowPlaying()
+{
+    // = {} zeroes everything, so ok is false and every failure below can store n as it is
+    NowPlaying n = {};
+
+    if (!isOnline())
+    {
+        storeNowPlaying(n); // quietly: it'd print every 5 seconds while Wi-Fi is down
+        return;
+    }
+
+    WiFiClientSecure client;
+    HTTPClient http;
+    client.setInsecure();
+    http.begin(client, String(SERVER_URL) + "/now-playing");
+    http.addHeader("X-Steve-Key", STEVE_KEY);
+    // short: a poll that waits a minute is out of date by the time it answers.
+    // If Render is asleep this one fails, and a later one finds it awake
+    http.setTimeout(10000);
+
+    unsigned long getStart = millis();
+    int status = http.GET();
+    unsigned long getTime = millis() - getStart;
+
+    if (status != 200)
+    {
+        if (status == 401)
+        {
+            Serial.println("now playing rejected: STEVE_KEY doesn't match the server");
+        }
+        else
+        {
+            // 503 means Spotify needs logging in again (tools/spotify_login.py)
+            Serial.printf("now playing failed, status %d after %lu ms\n", status, getTime);
+        }
+        http.end();
+        storeNowPlaying(n);
+        return;
+    }
+
+    String resp = http.getString();
+    http.end();
+
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, resp);
+    if (err)
+    {
+        Serial.printf("now playing parse failed: %s\n", err.c_str());
+        storeNowPlaying(n);
+        return;
+    }
+
+    // | gives a default when a field is missing, so an older server can't crash this
+    n.playing = doc["playing"] | false;
+    snprintf(n.title, sizeof(n.title), "%s", doc["title"] | "");
+    snprintf(n.artist, sizeof(n.artist), "%s", doc["artist"] | "");
+    snprintf(n.artId, sizeof(n.artId), "%s", doc["art_id"] | "");
+    n.progressMs = doc["progress_ms"] | 0UL;
+    n.durationMs = doc["duration_ms"] | 0UL;
+
+    n.ok = true; // only now: everything above worked
+    storeNowPlaying(n);
+}
+
 static void fetchBriefing()
 {
     // = {} zeroes every field, so count starts at 0 and every failure below
@@ -243,7 +352,9 @@ static void fetchBriefing()
     client.setInsecure();
     http.begin(client, String(SERVER_URL) + "/briefing");
     http.addHeader("X-Steve-Key", STEVE_KEY);
-    http.setTimeout(120000); // fetched in the background before 9, so it can wait out a cold start
+    // fetched in the background before 9, so it can wait out a cold start. 65 s is about the
+    // most setTimeout takes: it's a uint16_t, and anything over 65535 wraps around to a short wait
+    http.setTimeout(65000);
 
     unsigned long getStart = millis();
     int status = http.GET();

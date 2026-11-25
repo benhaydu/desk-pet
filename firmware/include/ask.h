@@ -46,6 +46,7 @@ struct NowPlaying
     unsigned long progressMs; // how far into the song, when the server answered
     unsigned long durationMs;
     char artId[32];           // Spotify ids are 22 characters. Changes when the album does
+    float bpm;                // the song's tempo, 0 if nobody knows it
 };
 
 void askStart();

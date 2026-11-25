@@ -16,6 +16,7 @@
 #include "sleep.h"
 #include "timer.h"
 #include "timerview.h"
+#include "music.h"
 
 // #define DEBUG_TIMING   // uncomment to print frame timing once a second
 
@@ -29,15 +30,12 @@ const long MAX_TIMER_MINUTES = 180;
 
 const unsigned long NOW_PLAYING_POLL_MS = 5000; // how often to ask the server what's playing
 
-// not static, the drawing modules (eyes, headline, scene, panel, reading, sleep, timerview, vine) use it through extern
+// not static, the drawing modules (eyes, headline, scene, panel, reading, sleep, timerview, vine, music) use it through extern
 TFT_eSPI tft = TFT_eSPI();
 TFT_eSprite frame = TFT_eSprite(&tft);
 
 unsigned long lastFrameTime = 0;
 
-// the latest album cover, in PSRAM. For now only /art shows it, the Now Playing screen will later
-static uint16_t *albumArt = nullptr;
-static bool haveArt = false;
 
 static Rect combine(Rect a, Rect b);
 static long parseMinutes(const char *text);
@@ -60,8 +58,7 @@ void setup()
   eyesInit();
   networkInit();
   askStart();
-
-  albumArt = (uint16_t *)ps_malloc(ART_BYTES);
+  musicInit();
 }
 
 void loop()
@@ -89,6 +86,7 @@ void loop()
     updateEyes();
     updateScene();
     updateReading();
+    updateMusic(); // before the timer view, so when a timer starts the music steps aside first
     updateTimerView();
 
     // the face's box, grown to cover the scene while one is showing
@@ -117,7 +115,18 @@ void loop()
       r = combine(r, timerBox);
     }
 
-    // a scene, paper or ring that just went away still has its last frame on screen, wipe it once
+    // and the Now Playing screen, the same way. It can't take over while the timer is up
+    Rect musicBox = musicRegion();
+    if (musicOwnsFace() && !timerViewActive())
+    {
+      r = musicBox;
+    }
+    else if (musicActive())
+    {
+      r = combine(r, musicBox);
+    }
+
+    // a scene, paper, ring or song that just went away still has its last frame on screen, wipe it once
     Rect leftover;
     if (sceneTakeClear(leftover))
     {
@@ -128,6 +137,10 @@ void loop()
       r = combine(r, leftover);
     }
     if (timerViewTakeClear(leftover))
+    {
+      r = combine(r, leftover);
+    }
+    if (musicTakeClear(leftover))
     {
       r = combine(r, leftover);
     }
@@ -144,6 +157,7 @@ void loop()
     {
       drawFace(); // no point drawing open eyes that the closed ones would hide
     }
+    drawMusic(r);     // headphones on him, and any part of the song card that changed
     drawTimerView(r); // the ring around him or the vine beside him
     drawReading();    // the paper he's holding, in front of his eyes
     drawSleep();      // closed eyes and z's at night
@@ -155,6 +169,14 @@ void loop()
 
     // only push the part of the screen that's in use
     frame.pushSprite(r.x, r.y, r.x, r.y, r.w, r.h);
+
+    // a part of the song card that changed outside that box (the progress bar, mostly).
+    // A second small push is much cheaper than one box stretched to cover both
+    Rect extra;
+    if (musicTakeExtra(extra))
+    {
+      frame.pushSprite(extra.x, extra.y, extra.x, extra.y, extra.w, extra.h);
+    }
 
     // after the face push, so a full-screen clear can never wipe fresh text
     updateHeadline();
@@ -210,6 +232,7 @@ void loop()
   // the timer steps aside whenever Steve needs his whole face, and comes back after.
   // Not for the timer itself, or it would hide itself
   timerViewSetAside(answering || readingActive() || !sleepFaceFree());
+  musicSetAside(answering || readingActive() || !sleepFaceFree());
 
   // at night his face is busy waking up first, so the thinking waits for it
   if (wantThinking && sleepFaceFree())
@@ -267,23 +290,6 @@ void loop()
     else if (strcmp(question, "/full") == 0)
     {
       setFaceMode(FACE_FULL);
-    }
-    else if (strcmp(question, "/art") == 0)
-    {
-      // test only: the last album cover in the middle of the screen. Do /mini first, so the
-      // big face isn't drawn over it, and /full to put everything back
-      if (!haveArt)
-      {
-        Serial.println("no album art yet, play a song first");
-      }
-      else
-      {
-        // pushImage sends each value's bytes in the opposite order to how they sit in memory,
-        // so it has to be told to swap them back. Without this the colours come out scrambled
-        tft.setSwapBytes(true);
-        tft.pushImage((tft.width() - ART_SIZE) / 2, (tft.height() - ART_SIZE) / 2, ART_SIZE, ART_SIZE, albumArt);
-        tft.setSwapBytes(false);
-      }
     }
     else if (strcmp(question, "/head") == 0)
     {
@@ -504,8 +510,9 @@ void loop()
     }
   }
 
-  // for now: ask the server what's playing every 5 s and print what comes back.
-  // Only one check at a time, so a slow server can't fill the queue and block questions
+  // ask the server what's playing every 5 s and hand it to the Now Playing screen. Only one
+  // check at a time, so a slow server can't fill the queue and block questions. Not while the
+  // screen is dark: nobody would see it, and the server gets to sleep too
   static bool nowPlayingWaiting = false;
   static unsigned long nowPlayingAskedAt = 0;
   static unsigned long seenNowPlaying = 0;
@@ -515,46 +522,29 @@ void loop()
     nowPlayingWaiting = false;
     NowPlaying n;
     nowPlayingLatest(n);
+    musicResult(n);
 
-    // a different album from the last one asked for: get its cover. If the queue happens to be
-    // full, artRequested stays the same and the next result (5 s later) tries again
-    static char artRequested[32] = "";
-    if (n.ok && n.playing && n.artId[0] != '\0' && strcmp(n.artId, artRequested) != 0 && artRequest(n.artId))
+    // print only when the song changes, not every 5 s
+    static char lastPrinted[64] = "";
+    if (n.ok && n.playing && strcmp(n.title, lastPrinted) != 0)
     {
-      snprintf(artRequested, sizeof(artRequested), "%s", n.artId);
-    }
-
-    if (!n.ok)
-    {
-      Serial.println("now playing check failed");
-    }
-    else if (!n.playing)
-    {
-      Serial.println("nothing playing");
-    }
-    else
-    {
-      unsigned long at = n.progressMs / 1000;
-      unsigned long length = n.durationMs / 1000;
-      Serial.printf("now playing: %s - %s  %lu:%02lu / %lu:%02lu\n",
-                    n.title, n.artist, at / 60, at % 60, length / 60, length % 60);
+      snprintf(lastPrinted, sizeof(lastPrinted), "%s", n.title);
+      Serial.printf("now playing: %s - %s\n", n.title, n.artist);
     }
   }
-  // a cover finished downloading
+  if (!nowPlayingWaiting && !sleepScreenDark() && millis() - nowPlayingAskedAt >= NOW_PLAYING_POLL_MS &&
+      nowPlayingRequest())
+  {
+    nowPlayingWaiting = true;
+    nowPlayingAskedAt = millis();
+  }
+
+  // an album cover finished downloading
   static unsigned long seenArt = 0;
   if (artVersion() != seenArt)
   {
     seenArt = artVersion();
-    char artId[32];
-    haveArt = albumArt != nullptr && artLatest(artId, sizeof(artId), albumArt);
-    Serial.printf("album art %s: %s\n", artId, haveArt ? "ready, /mini then /art to see it" : "failed");
-  }
-
-  // && stops at the first false, so a request is only sent when the first two are true
-  if (!nowPlayingWaiting && millis() - nowPlayingAskedAt >= NOW_PLAYING_POLL_MS && nowPlayingRequest())
-  {
-    nowPlayingWaiting = true;
-    nowPlayingAskedAt = millis();
+    musicArtReady();
   }
 
   // relax back to neutral once, after the hold runs out. The briefing sets its own faces

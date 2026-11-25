@@ -59,7 +59,9 @@ bool faceIsFull();         // true once the big face is really showing, not just
 
 // hooks for scenes
 void setFaceScale(float scale, int offsetY); // eases to a new size, 1.0 and 0 = normal
-void setFaceNudge(int dx, int dy);           // instant shift, for shakes and startles
+void setFaceShift(int dx);                   // eases sideways, for layouts that move him over
+void setFaceNudge(int dx, int dy);           // instant shift, for shakes, startles and bobbing
 void setFaceStretch(float s);                // instant height multiplier, 1.0 = normal
 void setGazeTarget(float x, float y);        // eyes follow this spot until cleared
 void clearGazeTarget();                      // back to his own glances
+void faceAnchor(float &x, float &y, float &scale); // his middle right now (size, shift and nudge, not glances), for drawing things on him

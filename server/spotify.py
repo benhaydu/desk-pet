@@ -4,6 +4,7 @@ import time
 import httpx
 
 from screen import clean_for_screen
+from tempo import song_bpm
 
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 NOW_PLAYING_URL = "https://api.spotify.com/v1/me/player/currently-playing"
@@ -22,7 +23,7 @@ _cached = None     # the last summary
 _cached_at = 0.0   # time.monotonic() when it was fetched
 _art_urls = {}     # album id -> image URL, for /art/<id>
 
-NOT_PLAYING = {"playing": False, "title": "", "artist": "", "progress_ms": 0, "duration_ms": 0, "art_id": ""}
+NOT_PLAYING = {"playing": False, "title": "", "artist": "", "progress_ms": 0, "duration_ms": 0, "art_id": "", "bpm": 0.0}
 
 
 class SpotifyAuthError(Exception):
@@ -110,6 +111,8 @@ def now_playing_summary() -> dict:
         item = data["item"]
         album = item["album"]
         art_id = album["id"]
+        isrc = (item.get("external_ids") or {}).get("isrc")
+        first_artist = item["artists"][0]["name"] if item["artists"] else ""
 
         summary = {
             "playing": True,
@@ -118,6 +121,8 @@ def now_playing_summary() -> dict:
             "progress_ms": data["progress_ms"],
             "duration_ms": item["duration_ms"],
             "art_id": art_id,
+            # looked up once per song, so only the first check of a new song is a little slower
+            "bpm": song_bpm(item["id"], isrc, item["name"], first_artist),
         }
 
         # Spotify gives a few sizes, biggest first (usually 640, 300 and 64).

@@ -88,6 +88,10 @@ static float scaleFrom = 1.0f, scaleTo = 1.0f;
 static float offsetFrom = 0, offsetTo = 0;
 static unsigned long scaleStart = 0;
 
+// sideways position, eased like the size so a layout can move him over smoothly
+static float faceShift = 0, shiftFrom = 0, shiftTo = 0;
+static unsigned long shiftStart = 0;
+
 // instant tweaks a scene sets every frame (the storm's startle and shake)
 static int nudgeX = 0, nudgeY = 0;
 static float faceStretch = 1.0f;
@@ -217,7 +221,7 @@ static void drawEyes()
   int h = eyeHeight * thinkSquash * faceScale * faceStretch;
   int spacing = EYE_SPACING * faceScale;
   int radius = EYE_RADIUS * faceScale;
-  int cx = CENTER_X + lookX * faceScale + nudgeX;
+  int cx = CENTER_X + faceShift + lookX * faceScale + nudgeX;
   int cy = CENTER_Y + faceOffsetY + lookY * faceScale + nudgeY;
 
   drawEye(cx - spacing, cy, w, h, radius, faceScale, true);
@@ -281,6 +285,21 @@ void setFaceScale(float scale, int offsetY)
   scaleTo = scale;
   offsetTo = offsetY;
   scaleStart = millis();
+}
+
+void setFaceShift(int dx)
+{
+  // from wherever he is right now, even mid-move, so two views handing over can't make him jump
+  shiftFrom = faceShift;
+  shiftTo = dx;
+  shiftStart = millis();
+}
+
+void faceAnchor(float &x, float &y, float &scale)
+{
+  x = CENTER_X + faceShift + nudgeX;
+  y = CENTER_Y + faceOffsetY + nudgeY;
+  scale = faceScale;
 }
 
 void setFaceNudge(int dx, int dy)
@@ -413,6 +432,14 @@ static void updateFaceScale()
   float e = easeInOut(t);
   faceScale = scaleFrom + (scaleTo - scaleFrom) * e;
   faceOffsetY = offsetFrom + (offsetTo - offsetFrom) * e;
+
+  // the same length and easing as the resize, so moving and resizing look like one motion
+  float st = (millis() - shiftStart) / (float)SCALE_FADE_MS;
+  if (st > 1)
+  {
+    st = 1;
+  }
+  faceShift = shiftFrom + (shiftTo - shiftFrom) * easeInOut(st);
 }
 
 static void updateGaze()

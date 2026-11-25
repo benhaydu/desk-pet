@@ -59,7 +59,6 @@ static const Rect VINE_BOX = {200, 4, 120, 196};
 static const Rect VINE_ALL = {0, 4, 320, 216};
 
 static const unsigned long SETTLE_MS = 400; // a bit longer than his 300 ms resize
-static const unsigned long SHIFT_MS = 300;  // the same as the resize, so he moves and shrinks as one
 
 // the vine's ending, and tidying it away
 static const unsigned long BLOOM_MS = 1600;
@@ -124,10 +123,7 @@ static int slide = 0;
 static int pushedPx = -1, pushedBloom = -1, pushedSlide = -1;
 static bool vineChanged = true;
 
-// the move to the left. setFaceNudge is instant, so the easing is done here
-static float shiftFrom = 0, shiftTo = 0;
-static unsigned long shiftStart = 0;
-static bool nudgeMine = false; // only hand the nudge back once, other things use it too
+static bool nudgeMine = false; // the hop's nudge. Only hand it back once, other things use it too
 static bool gazeMine = false;
 
 static float clamp01(float v)
@@ -188,19 +184,6 @@ static Look lookFor(Stage s)
 static bool settled()
 {
     return millis() - shownAt >= SETTLE_MS;
-}
-
-static float currentShift()
-{
-    float t = clamp01((millis() - shiftStart) / (float)SHIFT_MS);
-    return shiftFrom + (shiftTo - shiftFrom) * easeInOut(t);
-}
-
-static void startShift(float to)
-{
-    shiftFrom = currentShift(); // from wherever he is, even mid-move
-    shiftTo = to;
-    shiftStart = millis();
 }
 
 static void lookAt(float x, float y)
@@ -343,7 +326,7 @@ static void changeLook(Look want)
     {
     case Look::None:
         setFaceScale(1.0f, 0);
-        startShift(0);
+        setFaceShift(0);
         stopLooking();
         if (endFace)
         {
@@ -353,12 +336,12 @@ static void changeLook(Look want)
         break;
     case Look::Ring:
         setFaceScale(RING_FACE_SCALE, RING_FACE_OFFSET_Y);
-        startShift(0);
+        setFaceShift(0);
         stopLooking();
         break;
     case Look::Vine:
         setFaceScale(VINE_FACE_SCALE, VINE_FACE_OFFSET_Y);
-        startShift(VINE_SHIFT_X);
+        setFaceShift(VINE_SHIFT_X);
         break;
     }
 
@@ -368,10 +351,9 @@ static void changeLook(Look want)
     pushedPx = pushedBloom = pushedSlide = -1;
 }
 
-// the nudge carries the move left and the hop. Once neither is happening it's handed back
+// the time's-up hop. Once it isn't hopping, the nudge is handed back
 static void applyNudge()
 {
-    float sx = currentShift();
     int hopY = 0;
     if (shown == Look::Ring && stage == Stage::RingEnd && endStarted)
     {
@@ -381,11 +363,9 @@ static void applyNudge()
             hopY = -(int)(HOP_PX * sinf(PI * into / (float)HOP_MS) + 0.5f);
         }
     }
-    bool moving = millis() - shiftStart < SHIFT_MS;
-    int sxi = (int)lroundf(sx);
-    if (sxi != 0 || hopY != 0 || moving)
+    if (hopY != 0)
     {
-        setFaceNudge(sxi, hopY);
+        setFaceNudge(0, hopY);
         nudgeMine = true;
     }
     else if (nudgeMine)

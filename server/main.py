@@ -123,6 +123,7 @@ class NowPlaying(BaseModel):
     progress_ms: int
     duration_ms: int
     art_id: str
+    bpm: float = 0  # 0 = tempo unknown
 
 
 class AskResponse(BaseModel):

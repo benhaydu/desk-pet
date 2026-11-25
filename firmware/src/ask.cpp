@@ -397,6 +397,7 @@ static void fetchNowPlaying()
     snprintf(n.artId, sizeof(n.artId), "%s", doc["art_id"] | "");
     n.progressMs = doc["progress_ms"] | 0UL;
     n.durationMs = doc["duration_ms"] | 0UL;
+    n.bpm = doc["bpm"] | 0.0f;
 
     n.ok = true; // only now: everything above worked
     storeNowPlaying(n);

@@ -293,6 +293,13 @@ void loop()
     {
       setFaceMode(FACE_FULL);
     }
+    else if (strcmp(question, "/touch") == 0)
+    {
+      // test only: print the touch wire's readings, /touch again stops it
+      static bool touchPrinting = false;
+      touchPrinting = !touchPrinting;
+      touchDebug(touchPrinting);
+    }
     else if (strcmp(question, "/pause") == 0 || strcmp(question, "/play") == 0 || strcmp(question, "/next") == 0)
     {
       // the same as tapping while the music is up, but works any time

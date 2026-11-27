@@ -69,7 +69,9 @@ static void storePlayer(bool ok, const char *reason);
 void askStart()
 {
     // queue and lock have to exist before the task starts using them
-    askQueue = xQueueCreate(2, sizeof(Question));
+    // 4 deep: questions, briefings, now playing checks, covers and player commands all share it,
+    // and a question shouldn't be turned away just because a cover and a pause are waiting
+    askQueue = xQueueCreate(4, sizeof(Question));
     answerLock = xSemaphoreCreateMutex();
 
     // 28.8 KB each is a lot for the chip's own RAM, so they go in PSRAM like the frame does

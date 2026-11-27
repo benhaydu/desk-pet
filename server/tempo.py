@@ -2,7 +2,7 @@ import httpx
 
 # Spotify stopped giving apps a song's tempo in 2024, so this asks Deezer's free public API,
 # which has a "bpm" for many songs. No key needed. It's often 0 for songs it hasn't analysed,
-# and then the board just sways gently instead of bobbing to a beat
+# and then the board doesn't nod at all rather than nod at a made-up speed
 DEEZER = "https://api.deezer.com"
 
 _bpm_cache = {}  # Spotify track id -> bpm (0 = unknown), so each song is only looked up once

@@ -63,8 +63,17 @@ void updateHeadline()
     }
 }
 
-void drawHeadline()
+void drawHeadline(Rect pushed)
 {
+    // the main push cleared the strip under it (a timer or the music screen leaving wipes a
+    // big box for a few frames), so the text has to go back on, or it's gone until it changes
+    bool covered = pushed.y + pushed.h > STRIP_Y && pushed.y < STRIP_Y + STRIP_H &&
+                   pushed.x < STRIP_W && pushed.x + pushed.w > 0;
+    if (showing && covered)
+    {
+        dirty = true;
+    }
+
     if (!dirty)
     {
         return;

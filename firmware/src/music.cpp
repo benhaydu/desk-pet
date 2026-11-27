@@ -70,6 +70,11 @@ static NowPlaying song = {};
 static unsigned long songAt = 0;       // when that result arrived, to move the progress along
 static unsigned long lastPlayingAt = 0;
 static unsigned long pausedSince = 0;
+// Spotify keeps calling the last song "paused" for hours after you stop listening, so a paused
+// song only stays on screen if Steve saw it playing first (or paused it himself). Otherwise
+// a reboot would bring up whatever you listened to yesterday
+static bool heardPlaying = false;      // a song has played since Steve started
+static bool pausedHere = false;        // the current pause happened while he was watching
 static int taps = 0;
 static unsigned long lastTapAt = 0;
 static bool refreshWanted = false;
@@ -248,6 +253,7 @@ void musicResult(const NowPlaying &n)
     if (n.paused && !song.paused)
     {
         pausedSince = millis();
+        pausedHere = song.playing; // it was playing a moment ago, not paused since before he looked
     }
     if (n.paused != song.paused || n.playing != song.playing)
     {
@@ -260,6 +266,7 @@ void musicResult(const NowPlaying &n)
     if (n.playing)
     {
         lastPlayingAt = millis();
+        heardPlaying = true;
     }
 
     // a new album: ask for its cover. If the queue is full, artAsked stays the same and the
@@ -324,6 +331,7 @@ void musicControl(const char *action)
         song.paused = true;
         songAt = now;
         pausedSince = now;
+        pausedHere = true;
         barDirty = true;
     }
     else if (strcmp(action, "play") == 0 && !song.playing)
@@ -431,8 +439,8 @@ void updateMusic()
     wasBlocked = blocked;
 
     // up while it plays (and for a few seconds after, between songs), or while a song sits paused
-    bool recent = now - lastPlayingAt < HIDE_AFTER_MS;
-    bool pausedUp = song.paused && now - pausedSince < PAUSED_KEEP_MS;
+    bool recent = heardPlaying && now - lastPlayingAt < HIDE_AFTER_MS;
+    bool pausedUp = song.paused && pausedHere && now - pausedSince < PAUSED_KEEP_MS;
     bool want = haveSong && (recent || pausedUp) && !blocked && now - unblockedAt >= RETURN_DELAY_MS;
     if (want && !shown)
     {

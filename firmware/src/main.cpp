@@ -340,7 +340,7 @@ void loop()
         Serial.println("Steve's busy, try again in a sec");
       }
     }
-    else if (strcmp(question, "/play") == 0)
+       else if (strcmp(question, "/replay") == 0)
     {
       // test only: replay the last briefing without asking the server again
       Briefing b;
